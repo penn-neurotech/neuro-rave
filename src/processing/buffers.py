@@ -3,15 +3,119 @@ import numpy as np
 import warnings
 import scipy.signal as signal
 
+
 def is_power_of_two(n):
     return (n != 0) and (n & (n - 1) == 0)
 
+
+class Buffer(ABC):
+    def __init__(self, size, n_channels, dtype=np.float32):
+        if not is_power_of_two(size):
+            warnings.warn("Buffer size should be a power of 2 for optimal FFT performance.")
+
+        self.size = size
+        self.n_channels = n_channels
+        self.dtype = dtype
+
+    @abstractmethod
+    def add_sample(self, sample):
+        pass
+
+    @property
+    @abstractmethod
+    def data(self):
+        pass
+
+class CircularBuffer(Buffer):
+    def __init__(self, size, n_channels, dtype=np.float32):
+        super().__init__(size, n_channels, dtype)
+        self._data = np.zeros((size, n_channels), dtype=dtype)
+        self._index = 0
+        self._full = False
+
+    def add_sample(self, sample):
+        sample = np.asarray(sample, dtype=self.dtype)
+
+        if sample.shape[0] != self.n_channels:
+            raise ValueError(f"Sample must have {self.n_channels} channels.")
+
+        self._data[self._index] = sample
+        self._index = (self._index + 1) % self.size
+
+        if self._index == 0:
+            self._full = True
+
+    @property
+    def data(self):
+        # Not yet full → simple slice (O(1))
+        if not self._full:
+            return self._data[:self._index]
+
+        # Wrapped → must re-order (O(n))
+        return np.concatenate(
+            (self._data[self._index:], self._data[:self._index]),
+            axis=0
+        )
+
+    @property
+    def shape(self):
+        if not self._full:
+            return (self._index, self.n_channels)
+        return (self.size, self.n_channels)
+
+    def __array__(self):
+        return self.data
+
+    def __getitem__(self, item):
+        return self.data[item]
+    
+class DoubleCircularBuffer(Buffer):
+    def __init__(self, size, n_channels, dtype=np.float32):
+        super().__init__(size, n_channels, dtype)
+        self._data = np.zeros((size * 2, n_channels), dtype=dtype)
+        self._index = 0
+        self._full = False
+
+    def add_sample(self, sample):
+        sample = np.asarray(sample, dtype=self.dtype)
+
+        if sample.shape[0] != self.n_channels:
+            raise ValueError(f"Sample must have {self.n_channels} channels.")
+
+        self._data[self._index] = sample
+        self._data[self._index + self.size] = sample
+
+        self._index = (self._index + 1) % self.size
+
+        if self._index == 0:
+            self._full = True
+
+    @property
+    def data(self):
+        if not self._full:
+            return self._data[:self._index]
+
+        return self._data[self._index:self._index + self.size]
+
+    @property
+    def shape(self):
+        return (self.size, self.n_channels)
+
+    def __array__(self):
+        return self.data
+
+    def __getitem__(self, item):
+        return self.data[item]
+    
+    import scipy.signal as signal
+
+
 def apply_window(data, window_type="hann"):
-    n_samples = data.shape[0]
+    n = data.shape[0]
 
     window_map = {
         "hann": signal.windows.hann,
-        "hanning": signal.windows.hann,  # alias
+        "hanning": signal.windows.hann,
         "hamming": signal.windows.hamming,
         "blackman": signal.windows.blackman,
         "bartlett": signal.windows.bartlett,
@@ -22,76 +126,5 @@ def apply_window(data, window_type="hann"):
     if window_type not in window_map:
         raise ValueError(f"Unsupported window type: {window_type}")
 
-    window = window_map[window_type](n_samples)
+    window = window_map[window_type](n)
     return data * window[:, None]
-
-# can only add data which pushes out the oldest sample, you can apply window to data but not modify it directly, data is read only, you can only add samples to it
-class Buffer(ABC):
-    def __init__(self, size, n_channels):
-        if not is_power_of_two(size):
-            warnings.warn("Buffer size should be a power of 2 for optimal FFT performance.")
-        self.size = size
-        self.n_channels = n_channels
-        # self._data = np.zeros((size, n_channels))
-
-    @abstractmethod
-    def add_sample(self, sample):
-        pass
-
-    @abstractmethod
-    @property
-    def data(self):
-        pass
-
-# not efficient, write operations are O(n) but it uses minimal memory, you can apply window to data but not modify it directly, data is read only, you can only add samples to it
-class RollBuffer(Buffer):
-    def __init__(self, size, n_channels):
-        super().__init__(size, n_channels)
-        self._data = np.zeros((size, n_channels))
-
-    def add_sample(self, sample):
-        if len(sample) != self.n_channels:
-            raise ValueError(f"Sample must have {self.n_channels} channels.")
-        self._data = np.roll(self._data, -1, axis=0)
-        self._data[-1] = sample
-
-    @property
-    def data(self):
-        return self._data
-    
-# inefficient for read operations, write operations are O(1) but it uses minimal memory, you can apply window to data but not modify it directly, data is read only, you can only add samples to it
-class CircularBuffer(Buffer):
-    def __init__(self, size, n_channels):
-        super().__init__(size, n_channels)
-        self._data = np.zeros((size, n_channels))
-        self._index = 0
-
-    def add_sample(self, sample):
-        if len(sample) != self.n_channels:
-            raise ValueError(f"Sample must have {self.n_channels} channels.")
-        self._data[self._index] = sample
-        self._index = (self._index + 1) % self.size
-
-    @property
-    def data(self):
-        # Return data in the correct order (oldest to newest)
-        return np.roll(self._data, -self._index, axis=0)
-
-# ultra efficient time wise, all operations are O(1) but it uses double the memory of a normal buffer, you can apply window to data but not modify it directly, data is read only, you can only add samples to it
-class DoubleCircularBuffer(Buffer):
-    def __init__(self, size, n_channels):
-        super().__init__(size, n_channels)
-        self._data = np.zeros((size * 2, n_channels))
-        self._index = 0
-
-    def add_sample(self, sample):
-        if len(sample) != self.n_channels:
-            raise ValueError(f"Sample must have {self.n_channels} channels.")
-        self._data[self._index] = sample
-        self._data[self._index + self.size] = sample  # Mirror the data
-        self._index = (self._index + 1) % self.size
-
-    @property
-    def data(self):
-        # Return data in the correct order (oldest to newest)
-        return self._data[self._index:self._index + self.size]
