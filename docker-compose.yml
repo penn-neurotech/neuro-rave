@@ -11,6 +11,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./main.py:/app/main.py
+      - ./config:/app/config  # shared constants
     restart: unless-stopped
 
   dashboard:
@@ -19,7 +20,8 @@ services:
       - "5173:5173"
     volumes:
       - ./dashboard:/app
-      - /app/node_modules   # isolate container's node_modules from the host mount
+      - ./config:/app/config  # shared constants — read by both Python and Vite
+      - /app/node_modules     # isolate container's node_modules from the host mount
     environment:
       - VITE_WS_URL=ws://localhost:8765/ws
     depends_on:

@@ -12,10 +12,10 @@ from typing import TypeAlias
 import numpy as np
 import pandas as pd
 
-from .buffers import Buffer
+from .fifo import FIFO
 from ..constants import SAMPLE_RATE
 
-### problems: detection of event will only happen after enough data has entered the buffer.
+### problems: detection of event will only happen after enough data has entered the FIFO.
 ### this is not necessarily an issue but can cause slight delay.
 
 # classes to detect errors with EEG signals in real time. Is not 100% accurate to the time of when events occur
@@ -74,7 +74,7 @@ class EventDetector(ABC):
     Each instance is responsible for exactly one EEG channel.
     DetectorGroup creates and manages one instance per channel.
 
-    check() receives the full buffer and the channel index it is
+    check() receives the full FIFO and the channel index it is
     responsible for, returning the event timestamp on detection or None.
     _event_type is reset by DetectorGroup before each call and may be
     set by mixins during the call.
@@ -94,9 +94,9 @@ class EventDetector(ABC):
         return ""
 
     @abstractmethod
-    def check(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check(self, fifo: FIFO, channel: int) -> SingleResult:
         """
-        Inspect *buffer* at *channel* and return the event timestamp on
+        Inspect *fifo* at *channel* and return the event timestamp on
         detection, or None if the event has not occurred.
         """
         ...
@@ -122,18 +122,18 @@ class DurationEventDetector(EventDetector, ABC):
         self._last_duration: float | None = None
 
     @abstractmethod
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, fifo: FIFO, channel: int) -> SingleResult:
         """Return timestamp when the event begins on *channel*, else None."""
         ...
 
     @abstractmethod
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, fifo: FIFO, channel: int) -> SingleResult:
         """Return timestamp when the event ends on *channel*, else None."""
         ...
 
-    def check(self, buffer: Buffer, channel: int) -> DurationSingleResult:
+    def check(self, fifo: FIFO, channel: int) -> DurationSingleResult:
         if not self.is_on:
-            ts: SingleResult = self.check_onset(buffer, channel)
+            ts: SingleResult = self.check_onset(fifo, channel)
             if ts is not None:
                 self.is_on = True
                 self._onset_timestamp = ts
@@ -141,7 +141,7 @@ class DurationEventDetector(EventDetector, ABC):
                 self._event_type |= EventType.DURATION
                 return (ts, True)
         else:
-            ts = self.check_offset(buffer, channel)
+            ts = self.check_offset(fifo, channel)
             if ts is not None:
                 self.is_on = False
                 if self._onset_timestamp is not None:
@@ -185,8 +185,8 @@ class CounterMixin:
         self._count: int = 0
         self._threshold_fired: bool = False
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
-        result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
+    def check(self, fifo: FIFO, channel: int) -> AnySingleResult:
+        result: AnySingleResult = super().check(fifo, channel)  # type: ignore[misc]
         if result is not None:
             self._count += 1
             if not self._threshold_fired and self._count >= self.count_threshold:
@@ -220,8 +220,8 @@ class DebugMixin:
     Also provides log_debug() for manual debug messages.
     """
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
-        result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
+    def check(self, fifo: FIFO, channel: int) -> AnySingleResult:
+        result: AnySingleResult = super().check(fifo, channel)  # type: ignore[misc]
         if result is not None:
             ts: float = result[0] if isinstance(result, tuple) else result  # type: ignore[assignment]
             extra: str = getattr(self, "extra_message", lambda *_: "")(ts, channel)
@@ -242,8 +242,8 @@ class WarningMixin:
     timestamp, channel, and duration if available.
     """
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
-        result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
+    def check(self, fifo: FIFO, channel: int) -> AnySingleResult:
+        result: AnySingleResult = super().check(fifo, channel)  # type: ignore[misc]
         if result is not None:
             ts: float = result[0] if isinstance(result, tuple) else result  # type: ignore[assignment]
             last_duration: float | None = getattr(self, "_last_duration", None)
@@ -264,8 +264,8 @@ class ErrorMixin:
     detected. Stops the program unless the caller catches the exception.
     """
 
-    def check(self, buffer: Buffer, channel: int) -> AnySingleResult:
-        result: AnySingleResult = super().check(buffer, channel)  # type: ignore[misc]
+    def check(self, fifo: FIFO, channel: int) -> AnySingleResult:
+        result: AnySingleResult = super().check(fifo, channel)  # type: ignore[misc]
         if result is not None:
             ts: float = result[0] if isinstance(result, tuple) else result  # type: ignore[assignment]
             last_duration: float | None = getattr(self, "_last_duration", None)
@@ -346,9 +346,9 @@ class DetectorGroup:
 
     # ── Step ──────────────────────────────────────────────────────────────────
 
-    def check(self, buffer: Buffer) -> EventLogEntry | None:
+    def check(self, fifo: FIFO) -> EventLogEntry | None:
         """
-        Run every channel instance against *buffer*.
+        Run every channel instance against *fifo*.
 
         Returns a single EventLogEntry (with an aggregated channel mask and
         event_type) if any channel fired, else None.
@@ -360,7 +360,7 @@ class DetectorGroup:
 
         for ch, instance in self._instances.items():
             instance._event_type = EventType.REGULAR
-            result: AnySingleResult = instance.check(buffer, ch)
+            result: AnySingleResult = instance.check(fifo, ch)
             if result is not None:
                 ts: float
                 if isinstance(result, tuple):
@@ -440,23 +440,23 @@ class EventDetectorManager:
 
     # ── Step ──────────────────────────────────────────────────────────────────
 
-    def check(self, name: str, buffer: Buffer) -> EventLogEntry | None:
+    def check(self, name: str, fifo: FIFO) -> EventLogEntry | None:
         """Run a single detector group by name and return its log entry (or None)."""
-        entry = self.get_group(name).check(buffer)
+        entry = self.get_group(name).check(fifo)
         if entry is not None:
             self.event_log.append(entry)
         return entry
 
-    def check_all(self, buffer: Buffer) -> list[EventLogEntry]:
+    def check_all(self, fifo: FIFO) -> list[EventLogEntry]:
         """
-        Run every detector group against *buffer*.
+        Run every detector group against *fifo*.
 
         Returns entries that fired this timestep. All detections are
         appended to event_log.
         """
         step_entries: list[EventLogEntry] = []
         for group in self._groups.values():
-            entry = group.check(buffer)
+            entry = group.check(fifo)
             if entry is not None:
                 self.event_log.append(entry)
                 step_entries.append(entry)
@@ -560,14 +560,14 @@ class DisconnectionDetector(WarningMixin, DurationEventDetector):
         # we will store threshold here
         self.var_thresh = var_thresh
 
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, fifo: FIFO, channel: int) -> SingleResult:
         # if flat signal → disconnection started
-        result = buffer.timestamp if is_flat(buffer[channel,], self.var_thresh) else None
+        result = fifo.timestamp if is_flat(fifo[channel,], self.var_thresh) else None
         return SingleResult(result)
 
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, fifo: FIFO, channel: int) -> SingleResult:
         # if signal is no longer flat → disconnection ended
-        result = buffer.timestamp if not is_flat(buffer[channel,], self.var_thresh) else None
+        result = fifo.timestamp if not is_flat(fifo[channel,], self.var_thresh) else None
         return SingleResult(result)
 
 class LineNoiseDetector(WarningMixin, DurationEventDetector):
@@ -576,14 +576,14 @@ class LineNoiseDetector(WarningMixin, DurationEventDetector):
         self.line_noise = line_noise
         self.noise_thresh = noise_thresh
 
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, fifo: FIFO, channel: int) -> SingleResult:
         # if flat signal → disconnection started
-        result = buffer.timestamp if high_line_noise(buffer[channel,], self.line_noise, self.noise_thresh) else None
+        result = fifo.timestamp if high_line_noise(fifo[channel,], self.line_noise, self.noise_thresh) else None
         return SingleResult(result)
 
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, fifo: FIFO, channel: int) -> SingleResult:
         # if signal is no longer flat → disconnection ended
-        result = buffer.timestamp if not high_line_noise(buffer[channel,], self.line_noise, self.noise_thresh) else None
+        result = fifo.timestamp if not high_line_noise(fifo[channel,], self.line_noise, self.noise_thresh) else None
         return SingleResult(result)
 
 
@@ -592,7 +592,7 @@ class IdenticalSignalDetector(WarningMixin, DurationEventDetector):
         super().__init__()
 
     # some how need to check all channels that are far away from channel of interest have low correlation, may need to do this at the group level
-    def check_onset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_onset(self, fifo: FIFO, channel: int) -> SingleResult:
         return None
-    def check_offset(self, buffer: Buffer, channel: int) -> SingleResult:
+    def check_offset(self, fifo: FIFO, channel: int) -> SingleResult:
         return None
