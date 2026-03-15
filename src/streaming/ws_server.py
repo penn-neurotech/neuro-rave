@@ -1,123 +1,127 @@
 """
-WebSocket server that pulls EEG chunks from an LSL stream and broadcasts
-them to all connected dashboard clients once per second.
+WebSocket server that pulls EEG data from LSL and broadcasts it to all
+connected dashboard clients.
 
 Packet schema (JSON):
     {
+        "type":        str,        # packet kind, e.g. "raw"
         "timestamp":   float,      # LSL timestamp of the first sample
         "sample_rate": int,
         "n_channels":  int,
         "channels":    number[][]  # columnar — one array per channel
     }
 
-Run standalone (for development):
-    uvicorn src.streaming.ws_server:app --host 0.0.0.0 --port 8765 --reload
-
-Or start from main.py in a background thread via start_ws_server().
+Usage from main.py:
+    server = EEGWebSocketServer()
+    server.start()
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Set
 
 import numpy as np
+import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from pylsl import StreamInlet, resolve_stream
+from lslbridge import LSLConsumer
+from packets import RawPacket
 
-from ..constants import N_CHANNELS, SAMPLE_RATE, WINDOW_SIZE
+from ..constants import WINDOW_SIZE
 
 logger = logging.getLogger(__name__)
 
-# ── connected clients ──────────────────────────────────────────────────────────
 
-_clients: Set[WebSocket] = set()
+class EEGWebSocketServer:
+    def __init__(self, host: str = "0.0.0.0", port: int = 8765) -> None:
+        self.host = host
+        self.port = port
 
+        self._clients:  Set[WebSocket]     = set()
+        self._consumer: LSLConsumer | None = None
 
-async def _broadcast(payload: str) -> None:
-    dead: Set[WebSocket] = set()
-    for ws in list(_clients):
+        self.app = FastAPI(lifespan=self._lifespan)
+        self.app.add_api_websocket_route("/ws", self._ws_endpoint)
+
+    # ── Lifespan ───────────────────────────────────────────────────────────────
+
+    @asynccontextmanager
+    async def _lifespan(self, _app: FastAPI) -> AsyncGenerator[None, None]:
+        """Start all broadcast loops on app startup; cancel them on shutdown."""
+        tasks = [
+            asyncio.create_task(self._raw_loop()),
+            # future loops go here, e.g.:
+            # asyncio.create_task(self._features_loop()),
+        ]
+        yield
+        for task in tasks:
+            task.cancel()
+
+    # ── Client management ──────────────────────────────────────────────────────
+
+    async def _ws_endpoint(self, websocket: WebSocket) -> None:
+        """One coroutine per connected dashboard client. Stays alive until disconnect."""
+        await websocket.accept()
+        self._clients.add(websocket)
+        logger.info("Client connected  (total: %d)", len(self._clients))
         try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _clients.difference_update(dead)
+            while True:
+                await asyncio.sleep(10)  # data is pushed by broadcast loops
+        except WebSocketDisconnect:
+            pass
+        finally:
+            self._clients.discard(websocket)
+            logger.info("Client disconnected (total: %d)", len(self._clients))
 
+    async def _broadcast(self, payload: str) -> None:
+        """Send a JSON string to every connected client, pruning dead connections."""
+        dead: Set[WebSocket] = set()
+        for ws in list(self._clients):
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.add(ws)
+        self._clients.difference_update(dead)
 
-# ── LSL pull loop ──────────────────────────────────────────────────────────────
+    # ── Broadcast loops ────────────────────────────────────────────────────────
 
-async def _lsl_loop() -> None:
-    """Resolve an LSL EEG stream, pull WINDOW_SIZE samples per second, broadcast."""
-    loop = asyncio.get_event_loop()
+    async def _raw_loop(self) -> None:
+        """Pull raw EEG chunks from LSL and broadcast once per second."""
+        loop = asyncio.get_event_loop()
 
-    logger.info("Resolving LSL EEG stream…")
-    streams = await loop.run_in_executor(None, lambda: resolve_stream("type", "EEG"))
-    inlet = StreamInlet(streams[0])
-    logger.info("LSL stream resolved — broadcasting at ~1 packet/s")
+        logger.info("Resolving LSL EEG stream…")
+        self._consumer = await loop.run_in_executor(None, LSLConsumer)
+        logger.info("LSL stream resolved — raw broadcast active")
 
-    while True:
-        chunk, timestamps = await loop.run_in_executor(
-            None, lambda: inlet.pull_chunk(max_samples=WINDOW_SIZE)
-        )
-
-        if not chunk or not _clients:
-            await asyncio.sleep(0.05)
-            continue
-
-        arr = np.array(chunk, dtype=np.float32)  # (n_samples, n_channels)
-
-        payload = json.dumps({
-            "timestamp":   float(timestamps[0]),
-            "sample_rate": SAMPLE_RATE,
-            "n_channels":  N_CHANNELS,
-            "channels":    arr.T.tolist(),  # columnar: [[ch0…], [ch1…], …]
-        })
-
-        await _broadcast(payload)
-        await asyncio.sleep(0.9)  # pace to ~1 packet/s
-
-
-# ── FastAPI app ────────────────────────────────────────────────────────────────
-
-@asynccontextmanager
-async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    task = asyncio.create_task(_lsl_loop())
-    yield
-    task.cancel()
-
-
-app = FastAPI(lifespan=_lifespan)
-
-
-@app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket) -> None:
-    await websocket.accept()
-    _clients.add(websocket)
-    logger.info("Dashboard client connected  (total: %d)", len(_clients))
-    try:
-        # Keep the connection open; data is pushed by _lsl_loop
         while True:
-            await asyncio.sleep(10)
-    except WebSocketDisconnect:
-        pass
-    finally:
-        _clients.discard(websocket)
-        logger.info("Dashboard client disconnected (total: %d)", len(_clients))
+            chunk, timestamps = await loop.run_in_executor(
+                None, lambda: self._consumer.get_chunk(max_samples=WINDOW_SIZE)  # type: ignore[union-attr]
+            )
 
+            if not chunk or not self._clients:
+                await asyncio.sleep(0.05)
+                continue
 
-# ── helper for main.py ─────────────────────────────────────────────────────────
+            arr = np.array(chunk, dtype=np.float32)  # (n_samples, n_channels)
 
-def start_ws_server(host: str = "0.0.0.0", port: int = 8765) -> None:
-    """Launch the WebSocket server in a background thread (call from main.py)."""
-    import threading
-    import uvicorn
+            packet = RawPacket(
+                timestamp=float(timestamps[0]),
+                channels=arr.T.tolist(),  # columnar: [[ch0…], [ch1…], …]
+            )
 
-    def _run() -> None:
-        uvicorn.run(app, host=host, port=port, log_level="info")
+            await self._broadcast(packet.to_json())
+            await asyncio.sleep(0.9)  # pace to ~1 packet/s
 
-    thread = threading.Thread(target=_run, daemon=True, name="ws-server")
-    thread.start()
-    logger.info("WebSocket server started on ws://%s:%d/ws", host, port)
+    # ── Entry point ────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Launch the WebSocket server in a daemon thread."""
+        def _run() -> None:
+            uvicorn.run(self.app, host=self.host, port=self.port, log_level="info")
+
+        thread = threading.Thread(target=_run, daemon=True, name="ws-server")
+        thread.start()
+        logger.info("WebSocket server started on ws://%s:%d/ws", self.host, self.port)
