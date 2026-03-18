@@ -20,7 +20,7 @@ services:
       - "5173:5173"
     volumes:
       - ./dashboard:/app
-      - ./config:/app/config  # shared constants — read by both Python and Vite
+      - ./config:/config       # mounted at /config so vite alias ../config resolves correctly
       - /app/node_modules     # isolate container's node_modules from the host mount
     environment:
       - VITE_WS_URL=ws://localhost:8765/ws
