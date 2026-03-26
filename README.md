@@ -66,10 +66,10 @@ Browser opens automatically → log in with Premium account → approve → done
 
 3. **Run the demo:**
 ```bash
-# Test different moods (30 seconds each)
-SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=30 python3 scripts/spotify_fixed_mood_demo.py
-SPOTIFY_FIXED_MOOD=calm SPOTIFY_FIXED_DURATION_S=30 python3 scripts/spotify_fixed_mood_demo.py
-SPOTIFY_FIXED_MOOD=focus SPOTIFY_FIXED_DURATION_S=30 python3 scripts/spotify_fixed_mood_demo.py
+# Test different moods (5 minutes each)
+SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fixed_mood_demo.py
+SPOTIFY_FIXED_MOOD=calm SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fixed_mood_demo.py
+SPOTIFY_FIXED_MOOD=focus SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fixed_mood_demo.py
 ```
 
 **What happens:** Script connects to Spotify → starts the mood playlist → shows progress → stops after duration.
