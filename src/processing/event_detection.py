@@ -13,8 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .buffers import Buffer
-from ..constants import SAMPLE_RATE
-
+import src.constants as const
 ### problems: detection of event will only happen after enough data has entered the buffer.
 ### this is not necessarily an issue but can cause slight delay.
 
@@ -545,7 +544,7 @@ def high_line_noise(signal: np.ndarray, line_noise: float, noise_thresh: float =
     giving a 0–1 scale independent of signal amplitude.
     A threshold of 0.3 means line noise accounts for >30 % of total power.
     """
-    freqs = np.fft.rfftfreq(len(signal), d=1.0 / SAMPLE_RATE)
+    freqs = np.fft.rfftfreq(len(signal), d=1.0 / const.SAMPLE_RATE)
     power = np.abs(np.fft.rfft(signal)) ** 2
     idx = int(np.argmin(np.abs(freqs - line_noise)))
     return bool(power[idx] / power.sum() > noise_thresh)

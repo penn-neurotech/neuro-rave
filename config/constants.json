@@ -5,5 +5,6 @@
 
   "BIOSEMI_HOST":     "127.0.0.1",
   "BIOSEMI_PORT":     778,
-  "BYTES_PER_SAMPLE": 3
+  "BYTES_PER_SAMPLE": 3,
+  "WS_PORT": 8733
 }

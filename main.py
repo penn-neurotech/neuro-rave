@@ -20,7 +20,7 @@ if __name__ == "__main__":
     bridge.start()
 
     # ── WebSocket server: LSL → browser dashboard ────────────────────────
-    ws = EEGWebSocketServer(host="0.0.0.0", port=8765)
+    ws = EEGWebSocketServer(host="0.0.0.0", port=const.WS_PORT)
     ws.start()
 
     # ── FFT test plot ────────────────────────────────────────────────────

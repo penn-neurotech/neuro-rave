@@ -29,7 +29,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from src.streaming.lslbridge import LSLConsumer
 from src.streaming.packets import RawPacket
-from src.constants import WINDOW_SIZE
+import src.constants as const
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class EEGWebSocketServer:
 
         while True:
             chunk, timestamps = await loop.run_in_executor(
-                None, lambda: self._consumer.get_chunk(max_samples=WINDOW_SIZE)  # type: ignore[union-attr]
+                None, lambda: self._consumer.get_chunk(max_samples=const.WINDOW_SIZE)  # type: ignore[union-attr]
             )
 
             if not chunk or not self._clients:
