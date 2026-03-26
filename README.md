@@ -48,51 +48,69 @@ docker compose run --rm neuro-rave python src/streaming/tcp_test.py
 
 Source files are volume-mounted, so local edits are reflected immediately without rebuilding.
 
-### Spotify Demo: Test Music Generation
+### Spotify demos (Docker only)
 
 **Requirements:** Spotify Premium account + active playback device
 
-#### Quick Start (Local Development - Recommended)
+#### 1) Refresh token (run once on your machine)
 
-1. **Get your refresh token:**
+The refresh-token helper must run on the host (browser callback to `http://127.0.0.1:8080/callback`).
+Add that redirect URI in the Spotify Developer Dashboard if needed. Spotify may warn about
+`localhost`; use `127.0.0.1` in the dashboard.
+
 ```bash
 python3 get_spotify_refresh_token.py
 ```
-Browser opens automatically → log in with Premium account → approve → done!
 
-2. **Activate your Spotify device:**
-   - Open Spotify app on your computer/phone
-   - Start playing any song (this enables API control)
+That writes `SPOTIFY_REFRESH_TOKEN` into `./.env`. Restart containers after changing `.env`.
 
-3. **Run the demo:**
-```bash
-# Test different moods (5 minutes each)
-SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fixed_mood_demo.py
-SPOTIFY_FIXED_MOOD=calm SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fixed_mood_demo.py
-SPOTIFY_FIXED_MOOD=focus SPOTIFY_FIXED_DURATION_S=300 python3 scripts/spotify_fixed_mood_demo.py
-```
+#### 2) Activate Spotify on a device
 
-**What happens:** Script connects to Spotify → starts the mood playlist → shows progress → stops after duration.
+Open the Spotify app and start playing any song so API playback control works.
 
-#### Docker (Playback)
+#### 3) Docker demo — fixed mood (60 seconds each)
 
-Use Docker for playback, but **get the refresh token locally** (recommended).
-
-Why: the refresh-token script runs a local callback server at `http://127.0.0.1:8080/callback`.
-Spotify may warn that `http://localhost:...` is “not secure” in the dashboard; `127.0.0.1`
-is the reliable option. Running the callback server inside Docker can also cause
-`ERR_CONNECTION_REFUSED` in the browser unless you set up port publishing + binding.
+Use `-e` so mood and duration are passed into the container (Compose may otherwise set empty values).
 
 ```bash
-# 1) Get refresh token locally (host machine)
-python get_spotify_refresh_token.py
+docker compose run --rm \
+  -e SPOTIFY_FIXED_MOOD=hype \
+  -e SPOTIFY_FIXED_DURATION_S=60 \
+  -e SPOTIFY_FIXED_TICK_S=1 \
+  neuro-rave python scripts/spotify_fixed_mood_demo.py
 
-# 2) Run demo in Docker (make sure Spotify is active on host)
-SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=300 \
-  docker compose run --rm neuro-rave python scripts/spotify_fixed_mood_demo.py
+docker compose run --rm \
+  -e SPOTIFY_FIXED_MOOD=calm \
+  -e SPOTIFY_FIXED_DURATION_S=60 \
+  -e SPOTIFY_FIXED_TICK_S=1 \
+  neuro-rave python scripts/spotify_fixed_mood_demo.py
+
+docker compose run --rm \
+  -e SPOTIFY_FIXED_MOOD=focus \
+  -e SPOTIFY_FIXED_DURATION_S=60 \
+  -e SPOTIFY_FIXED_TICK_S=1 \
+  neuro-rave python scripts/spotify_fixed_mood_demo.py
 ```
 
-**Note:** Spotify app must be running on your host machine for Docker to control playback.
+**What happens:** The script starts the playlist for that mood and prints progress for 60 seconds.
+
+#### 4) Docker demo — EEG simulator (`main.py`)
+
+Another way to verify Spotify + mood switching without BioSemi: simulated EEG cycles
+calm → focus → hype with 60-second steps.
+
+```bash
+docker compose run --rm \
+  -e EEG_SIM=1 \
+  -e EEG_SIM_STEP_S=60 \
+  -e SPOTIFY_MIN_SWITCH_S=60 \
+  neuro-rave python main.py
+```
+
+What to expect:
+- Logs show `SIM target=calm/focus/hype ...`.
+- Playlists switch about once per minute.
+- Keep a Spotify playback device active.
 
 ## Conda (local development)
 
