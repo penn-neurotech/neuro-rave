@@ -72,10 +72,15 @@ python main.py
 
 Use `get_spotify_refresh_token.py` once to generate a refresh token for `.env`.
 
-1. Open `get_spotify_refresh_token.py` and set:
-   - `CLIENT_ID`
-   - `CLIENT_SECRET`
-   - `REDIRECT_URI` (must exactly match your Spotify app redirect URI)
+1. Export credentials (and optional redirect URI):
+
+```bash
+export SPOTIFY_CLIENT_ID=your_client_id
+export SPOTIFY_CLIENT_SECRET=your_client_secret
+# Optional; must exactly match your Spotify app redirect URI
+export SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
+```
+
 2. Run:
 
 ```bash
