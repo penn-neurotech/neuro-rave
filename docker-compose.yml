@@ -6,12 +6,26 @@ services:
       - "8765:8765"   # WebSocket server for the dashboard
     environment:
       - BIOSEMI_HOST=host.docker.internal
+      # --- BEGIN agent-added: WebSocket server toggle + Spotify env (optional) ---
+      - EEG_WS_SERVER=1
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+      - SPOTIFY_REFRESH_TOKEN=${SPOTIFY_REFRESH_TOKEN:-}
+      - SPOTIFY_USER_ID=${SPOTIFY_USER_ID:-default}
+      - SPOTIFY_PLAYLIST_CALM=${SPOTIFY_PLAYLIST_CALM:-}
+      - SPOTIFY_PLAYLIST_FOCUS=${SPOTIFY_PLAYLIST_FOCUS:-}
+      - SPOTIFY_PLAYLIST_HYPE=${SPOTIFY_PLAYLIST_HYPE:-}
+      - SPOTIFY_FIXED_MOOD=${SPOTIFY_FIXED_MOOD:-}
+      - SPOTIFY_FIXED_DURATION_S=${SPOTIFY_FIXED_DURATION_S:-}
+      - SPOTIFY_FIXED_TICK_S=${SPOTIFY_FIXED_TICK_S:-}
+      # --- END agent-added ---
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./src:/app/src
       - ./main.py:/app/main.py
       - ./config:/app/config  # shared constants
+      - ./scripts:/app/scripts
     restart: unless-stopped
 
   dashboard:

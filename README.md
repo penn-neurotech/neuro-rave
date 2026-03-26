@@ -48,6 +48,17 @@ docker compose run --rm neuro-rave python src/streaming/tcp_test.py
 
 Source files are volume-mounted, so local edits are reflected immediately without rebuilding.
 
+### Spotify: keep a fixed mood (no rapid switching)
+
+This runs Spotify playback using the `SPOTIFY_*` vars in `./.env` and holds a single mood
+(`calm`, `focus`, or `hype`) for a while.
+
+```bash
+# Example: hold hype for 5 minutes
+SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=300 \
+  docker compose run --rm neuro-rave python scripts/spotify_fixed_mood_demo.py
+```
+
 ## Conda (local development)
 
 ```bash
@@ -56,6 +67,30 @@ conda activate neuro-rave
 pip install -r requirements.txt
 python main.py
 ```
+
+## Get Spotify refresh token
+
+Use `get_spotify_refresh_token.py` once to generate a refresh token for `.env`.
+
+1. Open `get_spotify_refresh_token.py` and set:
+   - `CLIENT_ID`
+   - `CLIENT_SECRET`
+   - `REDIRECT_URI` (must exactly match your Spotify app redirect URI)
+2. Run:
+
+```bash
+python get_spotify_refresh_token.py
+```
+
+3. Open the printed Spotify authorize URL, log in, approve scopes.
+4. After redirect, copy the `code=` value from the callback URL.
+5. Paste that code into the terminal prompt.
+6. Copy printed values into your root `.env`:
+   - `SPOTIFY_CLIENT_ID=...`
+   - `SPOTIFY_CLIENT_SECRET=...`
+   - `SPOTIFY_REFRESH_TOKEN=...`
+
+Then run the fixed-mood demo or `main.py`/Docker pipeline.
 
 ------------------------------------------------------------------------
 
