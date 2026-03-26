@@ -27,10 +27,14 @@ from typing import AsyncGenerator, Set
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from lslbridge import LSLConsumer
-from packets import RawPacket
+# --- BEGIN agent-added: CORS + Spotify REST routes on same app as /ws ---
+from fastapi.middleware.cors import CORSMiddleware
 
-from ..constants import WINDOW_SIZE
+from src.api.spotify_routes import router as spotify_router
+from src.constants import WINDOW_SIZE
+from src.streaming.lslbridge import LSLConsumer
+from src.streaming.packets import RawPacket
+# --- END agent-added ---
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,16 @@ class EEGWebSocketServer:
         self._consumer: LSLConsumer | None = None
 
         self.app = FastAPI(lifespan=self._lifespan)
+        # --- BEGIN agent-added: CORS + mount /spotify/* routers ---
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        self.app.include_router(spotify_router)
+        # --- END agent-added ---
         self.app.add_api_websocket_route("/ws", self._ws_endpoint)
 
     # ── Lifespan ───────────────────────────────────────────────────────────────

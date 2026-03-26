@@ -5,5 +5,11 @@
 
   "BIOSEMI_HOST":     "127.0.0.1",
   "BIOSEMI_PORT":     778,
-  "BYTES_PER_SAMPLE": 3
+  "BYTES_PER_SAMPLE": 3,
+
+  "SPOTIFY_CLIENT_ID":      "f9fbc81f34174b569dddeb0746f6cbfd",
+  "SPOTIFY_CLIENT_SECRET":  "1cc88b5ce4464cf4912f7c0e8d4e3847",
+  "SPOTIFY_PLAYLIST_CALM":  "spotify:playlist:63K1r9eNMihJJGQ9RE0RMo",
+  "SPOTIFY_PLAYLIST_FOCUS": "spotify:album:526GOHUzH201xPsVWgBi1s",
+  "SPOTIFY_PLAYLIST_HYPE":  "spotify:playlist:7eEfJz9b3a1wS2jSyOvRvg"
 }

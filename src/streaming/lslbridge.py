@@ -2,7 +2,7 @@ import socket
 import threading
 import numpy as np
 from pylsl import StreamInfo, StreamOutlet, StreamInlet, resolve_stream
-from constants import N_CHANNELS, SAMPLE_RATE
+from src.constants import N_CHANNELS, SAMPLE_RATE
 
 class TCPSource:
     def __init__(self, host, port):

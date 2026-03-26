@@ -9,8 +9,13 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv(_ROOT / ".env")
+
 from src.music_gen.spotify_controller import NeuroFeatures, SpotifyClient, SpotifyNeuroController
 from src.music_gen.spotify_mapping_store import resolve_mood_playlists
+from src.constants import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 
 
 def _features_for_mood(mood: str) -> NeuroFeatures:
@@ -37,8 +42,8 @@ def main() -> None:
         )
 
     spotify = SpotifyClient(
-        client_id=os.environ["SPOTIFY_CLIENT_ID"],
-        client_secret=os.environ["SPOTIFY_CLIENT_SECRET"],
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
         refresh_token=os.environ["SPOTIFY_REFRESH_TOKEN"],
     )
     controller = SpotifyNeuroController(spotify, mood_playlists)

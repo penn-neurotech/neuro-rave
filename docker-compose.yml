@@ -26,6 +26,8 @@ services:
       - ./main.py:/app/main.py
       - ./config:/app/config  # shared constants
       - ./scripts:/app/scripts
+      - ./get_spotify_refresh_token.py:/app/get_spotify_refresh_token.py
+      - ./.env:/app/.env
     restart: unless-stopped
 
   dashboard:

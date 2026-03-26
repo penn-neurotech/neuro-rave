@@ -2,28 +2,33 @@
 One-time helper script to get a Spotify refresh token.
 
 Usage:
-1. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in your environment.
-2. Optionally set SPOTIFY_REDIRECT_URI (default: http://127.0.0.1:8080/callback).
-2. Run:  python get_spotify_refresh_token.py
-3. Open the printed URL in your browser, log in, and approve.
-4. After redirect, copy the `code` parameter from the URL.
-5. Paste the code into the script when prompted.
-6. Copy the printed REFRESH TOKEN and store it securely.
+1. Run:  python get_spotify_refresh_token.py
+2. Opens the Spotify login page in your browser automatically.
+3. Approve access when prompted.
+4. The script automatically captures the code and updates .env.
 """
+
+# -*- coding: utf-8 -*-
 
 import base64
 import os
+import sys
 import urllib.parse
+import webbrowser
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from threading import Thread
+from typing import Optional
 
 import requests
 
-# --- BEGIN agent-added: read credentials from environment ---
-CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
-CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
-REDIRECT_URI = os.environ.get(
-    "SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8080/callback"
-).strip()  # must match app settings
-# --- END agent-added ---
+# Import constants from src
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+from constants import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+
+CLIENT_ID = SPOTIFY_CLIENT_ID
+CLIENT_SECRET = SPOTIFY_CLIENT_SECRET
+REDIRECT_URI = "http://127.0.0.1:8080/callback"
 
 # Scopes: playback control + list playlists (for /spotify/playlists/suggestions).
 SCOPES = [
@@ -67,31 +72,148 @@ def exchange_code_for_tokens(code: str) -> dict:
     return resp.json()
 
 
+def update_env_file(refresh_token: str) -> None:
+    """Update or create .env file with refresh token."""
+    env_path = Path(".env")
+    
+    # Read existing .env if it exists
+    existing_vars = {}
+    if env_path.exists():
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        existing_vars[key.strip()] = value.strip()
+    
+    # Update with refresh token
+    existing_vars["SPOTIFY_REFRESH_TOKEN"] = refresh_token
+    
+    # Write back to .env
+    with open(env_path, "w") as f:
+        for key, value in existing_vars.items():
+            f.write(f"{key}={value}\n")
+    
+    print(f"\n✓ Added SPOTIFY_REFRESH_TOKEN to .env")
+
+
+class CallbackHandler(BaseHTTPRequestHandler):
+    """HTTP handler for OAuth callback."""
+    
+    auth_code: Optional[str] = None
+    error_msg: Optional[str] = None
+    
+    def do_GET(self):
+        """Handle GET request from Spotify callback."""
+        # Parse the callback URL
+        if not self.path.startswith("/callback"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        
+        # Extract query parameters
+        parsed_url = urllib.parse.urlparse(self.path)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # Check for error
+        if "error" in query_params:
+            CallbackHandler.error_msg = query_params["error"][0]
+            self.send_response(400)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            error_msg = CallbackHandler.error_msg
+            self.wfile.write(
+                f"<html><body><h1>Error</h1><p>{error_msg}</p></body></html>".encode('utf-8')
+            )
+            return
+        
+        # Get the authorization code
+        if "code" in query_params:
+            CallbackHandler.auth_code = query_params["code"][0]
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(
+                "<html><body><h1>✓ Success!</h1><p>Authorization code received. You can close this window.</p></body></html>".encode('utf-8')
+            )
+        else:
+            self.send_response(400)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<html><body><h1>No code received</h1></body></html>")
+    
+    def log_message(self, format, *args):
+        """Suppress default logging."""
+        pass
+
+
 def main() -> None:
-    if not CLIENT_ID or not CLIENT_SECRET:
-        raise RuntimeError(
-            "Missing Spotify credentials. Set SPOTIFY_CLIENT_ID and "
-            "SPOTIFY_CLIENT_SECRET in your environment."
-        )
-
+    # Parse redirect URI to get host and port
+    parsed_uri = urllib.parse.urlparse(REDIRECT_URI)
+    host = parsed_uri.hostname or "127.0.0.1"
+    port = parsed_uri.port or 8080
+    
+    print("Starting local server for OAuth callback...")
+    
+    # Start callback server in background thread
+    server = HTTPServer((host, port), CallbackHandler)
+    server_thread = Thread(daemon=True, target=server.serve_forever)
+    server_thread.start()
+    
+    # Build and open auth URL
     auth_url = build_auth_url()
-    print("Open this URL in your browser and approve access:")
-    print()
-    print(auth_url)
-    print()
-    print("After you are redirected, copy the 'code' parameter from the URL.")
-    code = input("Paste the 'code' value here: ").strip()
-
-    data = exchange_code_for_tokens(code)
-    print("\n=== TOKEN RESPONSE ===")
-    for k, v in data.items():
-        print(f"{k}: {v}")
-
-    print("\nIMPORTANT:")
-    print("Save the following values in your environment/config:")
-    print(f"SPOTIFY_CLIENT_ID={CLIENT_ID}")
-    print(f"SPOTIFY_CLIENT_SECRET={CLIENT_SECRET}")
-    print(f"SPOTIFY_REFRESH_TOKEN={data.get('refresh_token')!r}")
+    print(f"\n✓ Opening Spotify login in your browser...")
+    print(f"  {auth_url}\n")
+    
+    # Try to open browser automatically
+    try:
+        webbrowser.open(auth_url)
+    except Exception as e:
+        print(f"Could not open browser automatically. Open this URL manually:")
+        print(auth_url)
+    
+    print("Waiting for authorization...")
+    
+    # Wait for callback (timeout after 5 minutes)
+    import time
+    timeout = time.time() + 300
+    while CallbackHandler.auth_code is None and CallbackHandler.error_msg is None:
+        if time.time() > timeout:
+            print("❌ Timeout waiting for authorization.")
+            server.shutdown()
+            return
+        time.sleep(0.5)
+    
+    # Shutdown server
+    server.shutdown()
+    
+    # Handle errors
+    if CallbackHandler.error_msg:
+        print(f"❌ Authorization error: {CallbackHandler.error_msg}")
+        return
+    
+    code = CallbackHandler.auth_code
+    print(f"✓ Authorization code received!")
+    
+    # Exchange code for tokens
+    print("Exchanging code for refresh token...")
+    try:
+        data = exchange_code_for_tokens(code)
+    except Exception as e:
+        print(f"❌ Error exchanging code: {e}")
+        return
+    
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        print("❌ No refresh token in response")
+        print(data)
+        return
+    
+    # Update .env file
+    update_env_file(refresh_token)
+    
+    print("\n✓ Setup complete! You can now run main.py or the Docker pipeline.")
 
 
 if __name__ == "__main__":

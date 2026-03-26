@@ -48,15 +48,44 @@ docker compose run --rm neuro-rave python src/streaming/tcp_test.py
 
 Source files are volume-mounted, so local edits are reflected immediately without rebuilding.
 
-### Spotify: keep a fixed mood (no rapid switching)
+### Spotify Demo: Test Music Generation
 
-This runs Spotify playback using the `SPOTIFY_*` vars in `./.env` and holds a single mood
-(`calm`, `focus`, or `hype`) for a while.
+**Requirements:** Spotify Premium account + active playback device
+
+#### Quick Start (Local Development - Recommended)
+
+1. **Get your refresh token:**
+```bash
+python3 get_spotify_refresh_token.py
+```
+Browser opens automatically → log in with Premium account → approve → done!
+
+2. **Activate your Spotify device:**
+   - Open Spotify app on your computer/phone
+   - Start playing any song (this enables API control)
+
+3. **Run the demo:**
+```bash
+# Test different moods (30 seconds each)
+SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=30 python3 scripts/spotify_fixed_mood_demo.py
+SPOTIFY_FIXED_MOOD=calm SPOTIFY_FIXED_DURATION_S=30 python3 scripts/spotify_fixed_mood_demo.py
+SPOTIFY_FIXED_MOOD=focus SPOTIFY_FIXED_DURATION_S=30 python3 scripts/spotify_fixed_mood_demo.py
+```
+
+**What happens:** Script connects to Spotify → starts the mood playlist → shows progress → stops after duration.
+
+#### Docker (For EEG Processing Only)
+
+⚠️ **Docker cannot control Spotify playback** (containers can't access host Spotify app).
+
+Use Docker for EEG processing + dashboard, local Python for Spotify testing:
 
 ```bash
-# Example: hold hype for 5 minutes
-SPOTIFY_FIXED_MOOD=hype SPOTIFY_FIXED_DURATION_S=300 \
-  docker compose run --rm neuro-rave python scripts/spotify_fixed_mood_demo.py
+# EEG + Dashboard (Docker)
+docker compose up
+
+# Spotify testing (Local)
+python3 scripts/spotify_fixed_mood_demo.py
 ```
 
 ## Conda (local development)
@@ -68,34 +97,23 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Get Spotify refresh token
+#### Troubleshooting Spotify
 
-Use `get_spotify_refresh_token.py` once to generate a refresh token for `.env`.
+**❌ "Premium required"**
+- You need Spotify Premium for playback control
+- Free accounts can only read playlists/metadata
 
-1. Export credentials (and optional redirect URI):
+**❌ "No active device found"**
+- Open Spotify app and start playing any song first
+- This "activates" your device for API control
 
-```bash
-export SPOTIFY_CLIENT_ID=your_client_id
-export SPOTIFY_CLIENT_SECRET=your_client_secret
-# Optional; must exactly match your Spotify app redirect URI
-export SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
-```
+**❌ "User not registered for this application"**
+- Add your Spotify email to the app's user list in Spotify Developer Dashboard
+- For >25 users, apply for "Extension Mode"
 
-2. Run:
-
-```bash
-python get_spotify_refresh_token.py
-```
-
-3. Open the printed Spotify authorize URL, log in, approve scopes.
-4. After redirect, copy the `code=` value from the callback URL.
-5. Paste that code into the terminal prompt.
-6. Copy printed values into your root `.env`:
-   - `SPOTIFY_CLIENT_ID=...`
-   - `SPOTIFY_CLIENT_SECRET=...`
-   - `SPOTIFY_REFRESH_TOKEN=...`
-
-Then run the fixed-mood demo or `main.py`/Docker pipeline.
+**❌ Docker can't control Spotify**
+- Use local Python for Spotify testing
+- Docker containers can't access host Spotify app
 
 ------------------------------------------------------------------------
 
