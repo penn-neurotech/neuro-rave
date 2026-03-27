@@ -2,11 +2,15 @@
   "N_CHANNELS":       8,
   "SAMPLE_RATE":      512,
   "WINDOW_SIZE":      512,
+  "SIMULATE":         false,
 
   "BIOSEMI_HOST":     "127.0.0.1",
-  "BIOSEMI_PORT":     778,
+  "BIOSEMI_PORT":     8888,
   "BYTES_PER_SAMPLE": 3,
-  "WS_PORT": 8733,
+
+  "WS_HOST":          "0.0.0.0",
+  "WS_PORT":          8733,
+  "DASHBOARD_PORT":   5173,
 
   "SPOTIFY_CLIENT_ID":      "f9fbc81f34174b569dddeb0746f6cbfd",
   "SPOTIFY_CLIENT_SECRET":  "1cc88b5ce4464cf4912f7c0e8d4e3847",

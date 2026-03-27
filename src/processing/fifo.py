@@ -51,8 +51,8 @@ class Buffer(ABC):
         pass
 
 class CircularBuffer(Buffer):
-    def __init__(self, size, n_channels, dtype=np.float32):
-        super().__init__(size, n_channels, dtype)
+    def __init__(self, size, n_channels, sample_rate=None, dtype=np.float32):
+        super().__init__(size, n_channels, sample_rate, dtype)
         self._data = np.zeros((size, n_channels), dtype=dtype)
         self._index = 0
 
@@ -116,8 +116,8 @@ class CircularBuffer(Buffer):
         return self.data[item]
     
 class MirrorCircleBuffer(Buffer):
-    def __init__(self, size, n_channels, dtype=np.float32):
-        super().__init__(size, n_channels, dtype)
+    def __init__(self, size, n_channels, sample_rate=None, dtype=np.float32):
+        super().__init__(size, n_channels, sample_rate, dtype)
         self._data = np.zeros((size * 2, n_channels), dtype=dtype)
         self._index = 0
 

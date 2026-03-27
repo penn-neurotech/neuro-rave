@@ -30,22 +30,26 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # --- BEGIN agent-added: CORS + Spotify REST routes on same app as /ws ---
 from fastapi.middleware.cors import CORSMiddleware
 
+from scipy.signal import butter, lfilter, iirnotch
 from src.api.spotify_routes import router as spotify_router
-from src.constants import WINDOW_SIZE
+import src.constants as const
 from src.streaming.lslbridge import LSLConsumer
-from src.streaming.packets import RawPacket
-# --- END agent-added ---
+from src.streaming.packets import RawPacket, FeaturesPacket
+from src.processing.fifo import MirrorCircleBuffer
 
 logger = logging.getLogger(__name__)
 
 
 class EEGWebSocketServer:
-    def __init__(self, host: str = "0.0.0.0", port: int = 8765) -> None:
+    def __init__(self, host: str = const.WS_HOST, port: int = const.WS_PORT) -> None:
         self.host = host
         self.port = port
 
         self._clients:  Set[WebSocket]     = set()
         self._consumer: LSLConsumer | None = None
+        self._features_buf = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
+        self._features_dirty = False
+        self._energy_history: list[float] = []
 
         self.app = FastAPI(lifespan=self._lifespan)
         # --- BEGIN agent-added: CORS + mount /spotify/* routers ---
@@ -67,8 +71,7 @@ class EEGWebSocketServer:
         """Start all broadcast loops on app startup; cancel them on shutdown."""
         tasks = [
             asyncio.create_task(self._raw_loop()),
-            # future loops go here, e.g.:
-            # asyncio.create_task(self._features_loop()),
+            asyncio.create_task(self._features_loop()),
         ]
         yield
         for task in tasks:
@@ -127,6 +130,10 @@ class EEGWebSocketServer:
 
             arr = np.array(chunk, dtype=np.float32)  # (n_samples, n_channels)
 
+            # Feed features buffer from the same data
+            self._features_buf.add_chunk(arr)
+            self._features_dirty = True
+
             packet = RawPacket(
                 timestamp=float(timestamps[0]),
                 channels=arr.T.tolist(),  # columnar: [[ch0…], [ch1…], …]
@@ -135,6 +142,77 @@ class EEGWebSocketServer:
             await self._broadcast(packet.to_json())
             # logger.info("broadcast sent to %d client(s)", len(self._clients))
             await asyncio.sleep(0.9)  # pace to ~1 packet/s
+
+    # ── Features broadcast ────────────────────────────────────────────────────
+
+    async def _features_loop(self) -> None:
+        """Compute EEG features from the shared buffer and broadcast every ~1s."""
+        loop = asyncio.get_event_loop()
+        fs = const.SAMPLE_RATE
+
+        logger.info("Features broadcast loop active")
+
+        def _bandpower(d, lo, hi):
+            b, a = butter(4, [lo / (fs / 2), hi / (fs / 2)], btype="band")
+            filtered = lfilter(b, a, d, axis=0)
+            return np.mean(filtered ** 2, axis=0)
+
+        while True:
+            await asyncio.sleep(1.0)
+
+            if not self._features_dirty or not self._features_buf.full or not self._clients:
+                continue
+
+            self._features_dirty = False
+            data = self._features_buf.data.astype(np.float32)
+
+            # Run DSP in executor to avoid blocking the event loop
+            def _compute(data: np.ndarray) -> FeaturesPacket:
+                # Preprocessing
+                b_notch, a_notch = iirnotch(60 / (fs / 2), 30)
+                d = lfilter(b_notch, a_notch, data, axis=0)
+                b_bp, a_bp = butter(4, [1 / (fs / 2), 100 / (fs / 2)], btype="band")
+                d = lfilter(b_bp, a_bp, d, axis=0)
+
+                theta_power = _bandpower(d, 4, 8)
+                beta_power = _bandpower(d, 13, 30)
+                alpha_power = _bandpower(d, 8, 13)
+
+                tb = np.where(beta_power > 0, theta_power / beta_power, 0.0)
+                tb_mean = float(tb.mean())
+
+                total_power = float(np.sum(d ** 2) + 1e-12)
+                energy_raw = float(np.log10(total_power))
+                self._energy_history.append(energy_raw)
+                if len(self._energy_history) > 50:
+                    self._energy_history.pop(0)
+                e_min, e_max = min(self._energy_history), max(self._energy_history)
+                if (e_max - e_min) < 1e-9:
+                    energy = 0.5
+                else:
+                    energy = float(np.clip((energy_raw - e_min) / (e_max - e_min), 0.0, 1.0))
+
+                focus = float(np.clip((3.0 - tb_mean) / 2.5, 0.0, 1.0))
+
+                if energy < 0.3:
+                    mood = "calm"
+                elif energy < 0.7:
+                    mood = "focus"
+                else:
+                    mood = "hype"
+
+                return FeaturesPacket(
+                    timestamp=0.0,
+                    energy=energy,
+                    focus=focus,
+                    mood=mood,
+                    theta_beta_ratio=tb_mean,
+                    alpha_suppression=float(np.mean(alpha_power)),
+                )
+
+            packet = await loop.run_in_executor(None, _compute, data)
+            await self._broadcast(packet.to_json())
+            logger.info("features broadcast: mood=%s energy=%.2f focus=%.2f", packet.mood, packet.energy, packet.focus)
 
     # ── Entry point ────────────────────────────────────────────────────────────
 

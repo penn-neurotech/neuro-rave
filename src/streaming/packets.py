@@ -27,9 +27,12 @@ class RawPacket:
 @dataclass
 class FeaturesPacket:
     timestamp: float
-    alpha:     float
-    beta:      float
+    energy:    float
+    focus:     float
+    mood:      str
+    theta_beta_ratio:    float
+    alpha_suppression:   float
     type:      str = field(default="features", init=False)
 
-    def to_json(self) -> str: 
+    def to_json(self) -> str:
         return json.dumps(asdict(self))

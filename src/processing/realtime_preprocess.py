@@ -1,12 +1,12 @@
+import os
+import logging
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
-
 from src.streaming.lslbridge import LSLConsumer
 from src.processing.fifo import MirrorCircleBuffer
 import src.constants as const
 
-# ── Frequency bands (Hz) ─────────────────────────────────────────────────────
-
+logger = logging.getLogger(__name__)
 THETA = (4, 8)
 ALPHA = (8, 13)
 BETA  = (13, 30)
@@ -14,24 +14,22 @@ GAMMA = (30, 100)
 
 OVERLAP = 0.5
 
-# ── Filter utilities ─────────────────────────────────────────────────────────
 
-def bandpass(data: np.ndarray, low: float, high: float, fs: int) -> np.ndarray:
+def bandpass(data, low, high, fs):
     b, a = butter(4, [low / (fs / 2), high / (fs / 2)], btype="band")
     return lfilter(b, a, data, axis=0)
 
 
-def notch(data: np.ndarray, freq: float, fs: int, Q: float = 30) -> np.ndarray:
+def notch(data, freq, fs, Q=30):
     b, a = iirnotch(freq / (fs / 2), Q)
     return lfilter(b, a, data, axis=0)
 
 
-def bandpower(data: np.ndarray) -> np.ndarray:
+def bandpower(data):
     """Mean power per channel. Returns shape (n_channels,)."""
     return np.mean(data ** 2, axis=0)
 
 
-# ── Processor ────────────────────────────────────────────────────────────────
 
 class EEGProcessor:
     """
@@ -41,7 +39,7 @@ class EEGProcessor:
     window computes band powers and derived features.
     """
 
-    def __init__(self, window_seconds: float = 1.0) -> None:
+    def __init__(self, window_seconds=1.0):
         self.buffer = MirrorCircleBuffer.from_seconds(
             seconds=window_seconds,
             sample_rate=const.SAMPLE_RATE,
@@ -49,21 +47,21 @@ class EEGProcessor:
         )
         self.step_samples = int(self.buffer.size * (1 - OVERLAP))
 
-        # history — 2D arrays: each row is one sample, columns are channels
+        # history - 2D arrays: each row is one sample, columns are channels
         # shape grows as (n_windows * window_size, n_channels)
-        self.theta_hist: list[np.ndarray] = []  # list of (window_size, n_channels)
-        self.alpha_hist: list[np.ndarray] = []
-        self.beta_hist:  list[np.ndarray] = []
-        self.gamma_hist: list[np.ndarray] = []
+        self.theta_hist = []
+        self.alpha_hist = []
+        self.beta_hist  = []
+        self.gamma_hist = []
 
-    def get_history(self, band: str) -> np.ndarray:
+    def get_history(self, band):
         """Return full sample-by-sample history for a band as (n_samples, n_channels)."""
-        hist = getattr(self, f"{band}_hist")
+        hist = getattr(self, "{}_hist".format(band))
         if not hist:
             return np.empty((0, const.N_CHANNELS))
         return np.concatenate(hist, axis=0)
 
-    def process_window(self) -> dict:
+    def process_window(self):
         """
         Run preprocessing and feature extraction on the current buffer.
         Returns a dict of features for this window.
@@ -74,11 +72,11 @@ class EEGProcessor:
         data = notch(data, 60, const.SAMPLE_RATE)
         data = bandpass(data, 1, 100, const.SAMPLE_RATE)
 
-        # band-filtered signals — each is (window_size, n_channels)
-        theta = bandpass(data, *THETA, const.SAMPLE_RATE)
-        alpha = bandpass(data, *ALPHA, const.SAMPLE_RATE)
-        beta  = bandpass(data, *BETA,  const.SAMPLE_RATE)
-        gamma = bandpass(data, *GAMMA, const.SAMPLE_RATE)
+        # band-filtered signals - each is (window_size, n_channels)
+        theta = bandpass(data, THETA[0], THETA[1], const.SAMPLE_RATE)
+        alpha = bandpass(data, ALPHA[0], ALPHA[1], const.SAMPLE_RATE)
+        beta  = bandpass(data, BETA[0],  BETA[1],  const.SAMPLE_RATE)
+        gamma = bandpass(data, GAMMA[0], GAMMA[1], const.SAMPLE_RATE)
 
         # store full sample-by-sample filtered data
         self.theta_hist.append(theta.copy())
@@ -111,9 +109,8 @@ class EEGProcessor:
         }
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
 
-def run(simulate: bool = False) -> None:
+def run(simulate=False):
     processor = EEGProcessor()
 
     if simulate:
@@ -129,11 +126,11 @@ def run(simulate: bool = False) -> None:
                 features = processor.process_window()
                 tb = features["theta_beta_ratio"]
                 a_sup = features["alpha_suppression"]
-                print(f"Theta/Beta: {tb.mean():.2f} | Alpha Suppression: {a_sup.mean():.1f}%")
+                print("Theta/Beta: {:.2f} | Alpha Suppression: {:.1f}%".format(tb.mean(), a_sup.mean()))
     else:
         print("Searching for LSL EEG stream...")
         consumer = LSLConsumer("EEG")
-        print(f"Connected — {const.N_CHANNELS} channels @ {const.SAMPLE_RATE} Hz")
+        print("Connected - {} channels @ {} Hz".format(const.N_CHANNELS, const.SAMPLE_RATE))
 
         while True:
             samples, timestamps = consumer.get_chunk(max_samples=const.WINDOW_SIZE)
@@ -147,7 +144,7 @@ def run(simulate: bool = False) -> None:
                 features = processor.process_window()
                 tb = features["theta_beta_ratio"]
                 a_sup = features["alpha_suppression"]
-                print(f"Theta/Beta: {tb.mean():.2f} | Alpha Suppression: {a_sup.mean():.1f}%")
+                print("Theta/Beta: {:.2f} | Alpha Suppression: {:.1f}%".format(tb.mean(), a_sup.mean()))
 
 
 if __name__ == "__main__":

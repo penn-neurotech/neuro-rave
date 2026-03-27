@@ -2,31 +2,18 @@ services:
   neuro-rave:
     build: .
     ports:
-      - "8050:8050"
-      - "8733:8733"   # WebSocket server for the dashboard
+      - "8733:8733"
     environment:
       - BIOSEMI_HOST=host.docker.internal
-      # --- BEGIN agent-added: WebSocket server toggle + Spotify env (optional) ---
-      - EEG_WS_SERVER=1
-      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
-      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+      - WS_HOST=0.0.0.0
+      - WS_PORT=8733
       - SPOTIFY_REFRESH_TOKEN=${SPOTIFY_REFRESH_TOKEN:-}
-      - SPOTIFY_USER_ID=${SPOTIFY_USER_ID:-default}
-      - SPOTIFY_PLAYLIST_CALM=${SPOTIFY_PLAYLIST_CALM:-}
-      - SPOTIFY_PLAYLIST_FOCUS=${SPOTIFY_PLAYLIST_FOCUS:-}
-      - SPOTIFY_PLAYLIST_HYPE=${SPOTIFY_PLAYLIST_HYPE:-}
-      - SPOTIFY_FIXED_MOOD=${SPOTIFY_FIXED_MOOD:-}
-      - SPOTIFY_FIXED_DURATION_S=${SPOTIFY_FIXED_DURATION_S:-}
-      - SPOTIFY_FIXED_TICK_S=${SPOTIFY_FIXED_TICK_S:-}
-      # --- END agent-added ---
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./src:/app/src
       - ./main.py:/app/main.py
-      - ./config:/app/config  # shared constants
-      - ./scripts:/app/scripts
-      - ./get_spotify_refresh_token.py:/app/get_spotify_refresh_token.py
+      - ./config:/app/config
       - ./.env:/app/.env
     restart: unless-stopped
 
@@ -36,8 +23,8 @@ services:
       - "5173:5173"
     volumes:
       - ./dashboard:/app
-      - ./config:/config       # mounted at /config so vite alias ../config resolves correctly
-      - /app/node_modules     # isolate container's node_modules from the host mount
+      - ./config:/config
+      - /app/node_modules
     environment:
       - VITE_WS_URL=ws://localhost:8733/ws
     depends_on:

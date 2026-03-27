@@ -6,6 +6,9 @@ from pathlib import Path
 _config_path = Path(__file__).parent.parent / "config" / "constants.json"
 _config = json.loads(_config_path.read_text())
 
+### Mode
+SIMULATE:        bool = _config["SIMULATE"]
+
 ### Signal Processing
 N_CHANNELS:       int = _config["N_CHANNELS"]
 SAMPLE_RATE:      int = _config["SAMPLE_RATE"]
@@ -16,7 +19,9 @@ WINDOW_SIZE:      int = _config["WINDOW_SIZE"]
 BIOSEMI_HOST:     str = os.environ.get("BIOSEMI_HOST", _config["BIOSEMI_HOST"])
 BIOSEMI_PORT:     int = _config["BIOSEMI_PORT"]
 BYTES_PER_SAMPLE: int = _config["BYTES_PER_SAMPLE"]
-WS_PORT: int = _config["WS_PORT"]
+WS_HOST:          str = _config["WS_HOST"]
+WS_PORT:          int = _config["WS_PORT"]
+DASHBOARD_PORT:   int = _config["DASHBOARD_PORT"]
 
 ### Spotify API
 SPOTIFY_CLIENT_ID:      str = _config["SPOTIFY_CLIENT_ID"]

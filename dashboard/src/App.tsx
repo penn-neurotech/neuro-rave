@@ -1,20 +1,14 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useEEGStream } from "./hooks/useEEGStream"
 import { EEGChart } from "./components/EEGChart"
-import { SAMPLE_RATE } from "./constants"
+import { SAMPLE_RATE, WS_PORT } from "./constants"
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8765/ws"
+const WS_URL = import.meta.env.VITE_WS_URL ?? `ws://localhost:${WS_PORT}/ws`
 
 const moodColors: Record<string, string> = {
   calm: "#60a5fa",
   focus: "#34d399",
   hype: "#f97316",
-}
-
-function classifyMood(energy: number): string {
-  if (energy < 0.4) return "calm"
-  if (energy < 0.7) return "focus"
-  return "hype"
 }
 
 function getSpotifyPlaylist(mood: string): string {
@@ -108,18 +102,19 @@ function TinyBarChart({ history, metricKey, color, title }: {
 }
 
 export default function App() {
-  const { buffer, connected } = useEEGStream(WS_URL)
+  const { buffer, features, connected } = useEEGStream(WS_URL)
 
   const [musicMode, setMusicMode] = useState("Spotify")
-  const [energy, setEnergy] = useState(0.56)
-  const [focus, setFocus] = useState(0.68)
   const [history, setHistory] = useState<HistoryPoint[]>([])
   const [generationStatus, setGenerationStatus] = useState("Idle")
   const [logs, setLogs] = useState([
     { time: new Date().toLocaleTimeString(), text: "Dashboard started" },
   ])
+  const prevMoodRef = useRef<string | null>(null)
 
-  const mood = useMemo(() => classifyMood(energy), [energy])
+  const energy = features?.energy ?? 0
+  const focus = features?.focus ?? 0
+  const mood = features?.mood ?? "calm"
   const currentPlaylist = useMemo(() => getSpotifyPlaylist(mood), [mood])
   const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood])
 
@@ -128,59 +123,50 @@ export default function App() {
     ? buffer.getData().map(ch => new Float32Array(ch))
     : []
 
-  // Simulated energy/focus updates (replace with real feature extraction later)
+  // Update history and logs when features arrive
   useEffect(() => {
-    const interval = setInterval(() => {
-      const newEnergy = Math.max(0, Math.min(1, energy + (Math.random() - 0.5) * 0.2))
-      const newFocus = Math.max(0, Math.min(1, focus + (Math.random() - 0.5) * 0.15))
-      const newMood = classifyMood(newEnergy)
-      const oldMood = classifyMood(energy)
+    if (!features) return
 
-      const now = new Date()
-      const time = now.toLocaleTimeString()
+    const now = new Date().toLocaleTimeString()
 
-      setEnergy(newEnergy)
-      setFocus(newFocus)
+    setHistory((prev) => {
+      const updated = [...prev, { time: now, energy: features.energy, focus: features.focus }]
+      return updated.slice(-8)
+    })
 
-      setHistory((prev) => {
-        const updated = [...prev, { time, energy: newEnergy, focus: newFocus }]
-        return updated.slice(-8)
-      })
+    const prevMood = prevMoodRef.current
+    if (prevMood !== null && features.mood !== prevMood) {
+      setLogs((prev) => [
+        { time: now, text: `Mood changed from ${prevMood} to ${features.mood}` },
+        ...prev,
+      ].slice(0, 8))
 
-      if (newMood !== oldMood) {
+      if (musicMode === "Spotify") {
         setLogs((prev) => [
-          { time, text: `Mood changed from ${oldMood} to ${newMood}` },
+          { time: now, text: `Spotify switched to "${getSpotifyPlaylist(features.mood)}"` },
+          ...prev,
+        ].slice(0, 8))
+      }
+
+      if (musicMode === "Suno") {
+        setGenerationStatus("Generating")
+        setLogs((prev) => [
+          { time: now, text: `Suno requested a new ${features.mood} track` },
           ...prev,
         ].slice(0, 8))
 
-        if (musicMode === "Spotify") {
+        setTimeout(() => {
+          setGenerationStatus("Ready")
+          const readyTime = new Date().toLocaleTimeString()
           setLogs((prev) => [
-            { time, text: `Spotify switched to "${getSpotifyPlaylist(newMood)}"` },
+            { time: readyTime, text: "Suno track finished generating" },
             ...prev,
           ].slice(0, 8))
-        }
-
-        if (musicMode === "Suno") {
-          setGenerationStatus("Generating")
-          setLogs((prev) => [
-            { time, text: `Suno requested a new ${newMood} track` },
-            ...prev,
-          ].slice(0, 8))
-
-          setTimeout(() => {
-            setGenerationStatus("Ready")
-            const readyTime = new Date().toLocaleTimeString()
-            setLogs((prev) => [
-              { time: readyTime, text: "Suno track finished generating" },
-              ...prev,
-            ].slice(0, 8))
-          }, 2500)
-        }
+        }, 2500)
       }
-    }, 3000)
-
-    return () => clearInterval(interval)
-  }, [energy, focus, musicMode])
+    }
+    prevMoodRef.current = features.mood
+  }, [features, musicMode])
 
   return (
     <div className="app-shell">

@@ -12,9 +12,12 @@ export interface RawPacket extends BasePacket {
 }
 
 export interface FeaturesPacket extends BasePacket {
-  type:  'features'
-  alpha: number
-  beta:  number
+  type:               'features'
+  energy:             number
+  focus:              number
+  mood:               string
+  theta_beta_ratio:   number
+  alpha_suppression:  number
 }
 
 export type AnyPacket = RawPacket | FeaturesPacket

@@ -39,7 +39,7 @@ SCOPES = [
 ]
 
 
-def build_auth_url() -> str:
+def build_auth_url():
     params = {
         "client_id": CLIENT_ID,
         "response_type": "code",
@@ -49,7 +49,7 @@ def build_auth_url() -> str:
     return "https://accounts.spotify.com/authorize?" + urllib.parse.urlencode(params)
 
 
-def exchange_code_for_tokens(code: str) -> dict:
+def exchange_code_for_tokens(code):
     token_url = "https://accounts.spotify.com/api/token"
     auth_header = base64.b64encode(
         f"{CLIENT_ID}:{CLIENT_SECRET}".encode("utf-8")
@@ -72,7 +72,7 @@ def exchange_code_for_tokens(code: str) -> dict:
     return resp.json()
 
 
-def update_env_file(refresh_token: str) -> None:
+def update_env_file(refresh_token) -> None:
     """Update or create .env file with refresh token."""
     env_path = Path(".env")
     
@@ -148,7 +148,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         pass
 
 
-def main() -> None:
+def main():
     # Parse redirect URI to get host and port
     parsed_uri = urllib.parse.urlparse(REDIRECT_URI)
     host = parsed_uri.hostname or "127.0.0.1"

@@ -69,8 +69,6 @@ class LSLConsumer:
         return self._inlet.pull_chunk(max_samples=max_samples)
     
 def _stream_loop(tcpsource, decoder, lslpub):
-    tcpsource.connect()
-
     while True:
         raw_block = tcpsource.recv_exact(decoder.sample_block_size)
         sample = decoder.decode_block(raw_block)
@@ -85,6 +83,8 @@ class LSLBridge:
         self._thread = None
 
     def start(self):
+        """Connect to TCP source (raises on failure), then start streaming thread."""
+        self.tcp.connect()  # blocks until connected or raises
         self._thread = threading.Thread(
             target=_stream_loop,
             args=(self.tcp, self.decoder, self.publisher),
