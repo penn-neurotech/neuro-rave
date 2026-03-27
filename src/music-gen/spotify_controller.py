@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -147,6 +148,10 @@ class SpotifyNeuroController:
         self._spotify = spotify_client
         self._mood_playlists = mood_playlists
         self._current_mood: Optional[str] = None
+        self._last_switch_at: float = 0.0
+        # Minimum seconds between playlist changes to avoid rapid switching.
+        # Can be overridden via env var; default keeps each choice for ~60s.
+        self._min_switch_s: float = float(os.environ.get("SPOTIFY_MIN_SWITCH_S", "60") or "60")
 
     def update(self, features: NeuroFeatures, device_id: Optional[str] = None) -> None:
         """Update Spotify playback based on the latest features.
@@ -162,6 +167,10 @@ class SpotifyNeuroController:
         if mood == self._current_mood:
             return
 
+        now = time.time()
+        if self._last_switch_at and (now - self._last_switch_at) < self._min_switch_s:
+            return
+
         playlist_uri = self._mood_playlists.get(mood)
         if not playlist_uri:
             # No playlist configured for this mood; do nothing.
@@ -169,4 +178,5 @@ class SpotifyNeuroController:
 
         self._spotify.start_playlist(playlist_uri, device_id=device_id)
         self._current_mood = mood
+        self._last_switch_at = now
 
