@@ -112,6 +112,25 @@ What to expect:
 - Playlists switch about once per minute.
 - Keep a Spotify playback device active.
 
+#### 5) Docker demo — auto fallback (real EEG if present, simulator if missing)
+
+Use this mode when you want `main.py` to consume real EEG whenever data is available,
+and automatically fall back to simulation when no real chunks arrive.
+
+```bash
+docker compose run --rm \
+  -e EEG_SIM_AUTO=1 \
+  -e EEG_NO_DATA_TIMEOUT_S=2 \
+  -e EEG_SIM_STEP_S=60 \
+  -e SPOTIFY_MIN_SWITCH_S=60 \
+  neuro-rave python main.py
+```
+
+What to expect:
+- Logs show `EEG mode -> REAL` when incoming real data is detected.
+- Logs show `EEG mode -> SIM` after the no-data timeout.
+- Spotify switching behavior remains capped by `SPOTIFY_MIN_SWITCH_S`.
+
 ## Conda (local development)
 
 ```bash

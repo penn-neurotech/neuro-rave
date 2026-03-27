@@ -39,6 +39,12 @@ if __name__ == "__main__":
     # --- END agent-added ---
 
     simulate_eeg = os.environ.get("EEG_SIM", "0").strip().lower() in ("1", "true", "yes")
+    auto_sim_fallback = os.environ.get("EEG_SIM_AUTO", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    no_data_timeout_s = float(os.environ.get("EEG_NO_DATA_TIMEOUT_S", "2.0") or "2.0")
 
     consumer: LSLConsumer | None = None
     fifo = MirrorCircleBuffer(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
@@ -118,104 +124,100 @@ if __name__ == "__main__":
     # --- END agent-added ---
 
     plt.ion()
+    sim_step_s = float(os.environ.get("EEG_SIM_STEP_S", "60") or "60")
+    sim_gain = float(os.environ.get("EEG_SIM_GAIN", "0.8") or "0.8")
+    sim_start_t = time.time()
+    sim_state = {"amp": 0.2}
+    last_real_data_t = time.time()
+    mode = "sim" if simulate_eeg else "real"
 
     if simulate_eeg:
-        sim_step_s = float(os.environ.get("EEG_SIM_STEP_S", "60") or "60")
-        # Feedback gain: higher = faster correction, lower = smoother drift.
-        sim_gain = float(os.environ.get("EEG_SIM_GAIN", "0.8") or "0.8")
         logger.info(
-            "EEG_SIM enabled: generating synthetic EEG windows (step=%.0fs, gain=%.2f).",
+            "EEG_SIM enabled: forced simulation mode (step=%.0fs, gain=%.2f).",
             sim_step_s,
             sim_gain,
         )
-        start_t = time.time()
-        amp = 0.2
-        while True:
-            elapsed = time.time() - start_t
-            step = int(elapsed // max(sim_step_s, 1e-6)) % 3
-            # Hold each bucket for ~sim_step_s seconds: calm -> focus -> hype -> ...
-            # We don't force the mood directly; instead we target an energy band and
-            # adjust the synthetic signal amplitude until the extracted energy lands there.
-            if step == 0:
-                target = "calm"
-                target_lo, target_hi = 0.05, 0.25
-                target_mid = 0.15
-            elif step == 1:
-                target = "focus"
-                target_lo, target_hi = 0.35, 0.65
-                target_mid = 0.50
-            else:
-                target = "hype"
-                target_lo, target_hi = 0.75, 0.95
-                target_mid = 0.85
+    elif auto_sim_fallback:
+        logger.info(
+            "EEG_SIM_AUTO enabled: fallback to simulation after %.1fs without real EEG.",
+            no_data_timeout_s,
+        )
 
-            t = np.arange(const.WINDOW_SIZE, dtype=np.float32) / float(const.SAMPLE_RATE)
-            base = np.sin(2 * np.pi * 10.0 * t)  # 10 Hz alpha-ish
-            noise = np.random.normal(scale=0.2, size=const.WINDOW_SIZE).astype(np.float32)
-            signal_1d = (0.2 + 2.0 * amp) * base + noise
-            window = np.tile(signal_1d[:, None], (1, const.N_CHANNELS)).astype(np.float32)
+    def run_sim_step() -> None:
+        elapsed = time.time() - sim_start_t
+        step = int(elapsed // max(sim_step_s, 1e-6)) % 3
+        if step == 0:
+            target = "calm"
+            target_lo, target_hi = 0.05, 0.25
+            target_mid = 0.15
+        elif step == 1:
+            target = "focus"
+            target_lo, target_hi = 0.35, 0.65
+            target_mid = 0.50
+        else:
+            target = "hype"
+            target_lo, target_hi = 0.75, 0.95
+            target_mid = 0.85
 
-            # Extract features so we can keep the synthetic data in-band.
-            try:
-                features = extract_spotify_features(window)
-            except Exception as exc:
-                logger.warning("SIM feature extraction failed: %s", exc)
-                time.sleep(0.25)
-                continue
+        t = np.arange(const.WINDOW_SIZE, dtype=np.float32) / float(const.SAMPLE_RATE)
+        base = np.sin(2 * np.pi * 10.0 * t)
+        noise = np.random.normal(scale=0.2, size=const.WINDOW_SIZE).astype(np.float32)
+        signal_1d = (0.2 + 2.0 * sim_state["amp"]) * base + noise
+        window = np.tile(signal_1d[:, None], (1, const.N_CHANNELS)).astype(np.float32)
 
-            # Feedback: nudge amplitude toward the target energy mid-point.
-            # If we are already in the band, keep only a tiny correction.
-            err = target_mid - float(features.energy)
-            in_band = target_lo <= float(features.energy) <= target_hi
-            gain = sim_gain * (0.15 if in_band else 1.0)
-            amp = float(np.clip(amp + gain * err, 0.0, 1.5))
+        features = extract_spotify_features(window)
+        err = target_mid - float(features.energy)
+        in_band = target_lo <= float(features.energy) <= target_hi
+        gain = sim_gain * (0.15 if in_band else 1.0)
+        sim_state["amp"] = float(np.clip(sim_state["amp"] + gain * err, 0.0, 1.5))
 
-            # Build a stable synthetic feature in the requested mood zone so
-            # calm/focus/hype mapping is deterministic during simulator tests.
-            control_energy = float(np.clip(target_mid + np.random.normal(scale=0.02), target_lo, target_hi))
-            control_features = SpotifyNeuroFeatures(
-                energy=control_energy,
-                focus=features.focus,
-            )
+        control_energy = float(
+            np.clip(target_mid + np.random.normal(scale=0.02), target_lo, target_hi)
+        )
+        control_features = SpotifyNeuroFeatures(energy=control_energy, focus=features.focus)
 
-            # --- drive Spotify using simulator control features ---
-            if spotify_controller is not None:
-                try:
-                    spotify_controller.update(control_features)
-                except Exception as exc:
-                    logger.warning("Spotify update failed: %s", exc)
+        if spotify_controller is not None:
+            spotify_controller.update(control_features)
 
-            logger.info(
-                "SIM target=%s raw_energy=%.3f ctrl_energy=%.3f focus=%.3f amp=%.3f in_band=%s",
-                target,
-                features.energy,
-                control_features.energy,
-                features.focus,
-                amp,
-                in_band,
-            )
+        logger.info(
+            "SIM target=%s raw_energy=%.3f ctrl_energy=%.3f focus=%.3f amp=%.3f in_band=%s",
+            target,
+            features.energy,
+            control_features.energy,
+            features.focus,
+            sim_state["amp"],
+            in_band,
+        )
 
-            sp = np.fft.fft(signal_1d)
-            sp[0] = 0
-            plt.clf()
-            plt.plot(sp.real)
-            plt.pause(0.001)
+        sp = np.fft.fft(signal_1d)
+        sp[0] = 0
+        plt.clf()
+        plt.plot(sp.real)
+        plt.pause(0.001)
+
+    assert consumer is not None or simulate_eeg
+    while True:
+        if simulate_eeg:
+            if mode != "sim":
+                mode = "sim"
+                logger.info("EEG mode -> SIM (forced).")
+            run_sim_step()
             time.sleep(0.25)
-    else:
+            continue
+
         assert consumer is not None
-        while True:
-            samples, ts = consumer.get_chunk()
-
-            if len(samples) == 0:
-                continue
-
+        samples, ts = consumer.get_chunk()
+        if len(samples) > 0:
+            if mode != "real":
+                mode = "real"
+                logger.info("EEG mode -> REAL (incoming data detected).")
+            last_real_data_t = time.time()
             fifo.add_chunk(samples)
 
             if fifo.full:
                 sp = np.fft.fft(fifo)
                 sp[0] = 0
 
-                # --- BEGIN agent-added: drive Spotify from windowed EEG ---
                 if spotify_controller is not None:
                     try:
                         window = np.asarray(fifo, dtype=np.float32)
@@ -223,8 +225,21 @@ if __name__ == "__main__":
                         spotify_controller.update(features)
                     except Exception as exc:
                         logger.warning("Spotify update failed: %s", exc)
-                # --- END agent-added ---
 
                 plt.clf()
                 plt.plot(sp.real)
                 plt.pause(0.001)
+            continue
+
+        # No real samples this tick.
+        if auto_sim_fallback and (time.time() - last_real_data_t) >= no_data_timeout_s:
+            if mode != "sim":
+                mode = "sim"
+                logger.info("EEG mode -> SIM (no real data).")
+            try:
+                run_sim_step()
+            except Exception as exc:
+                logger.warning("SIM step failed: %s", exc)
+            time.sleep(0.25)
+        else:
+            time.sleep(0.01)
