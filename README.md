@@ -36,9 +36,11 @@ docker compose up
 
 To stop: `docker compose down`
 
-**`docker compose up` and EEG:** `main.py` defaults to **`EEG_SIM_AUTO=1`**. The stack still starts the **real** TCP→LSL path in the container; if no real samples arrive within **`EEG_NO_DATA_TIMEOUT_S`** (default 2 seconds), it **falls back** to the synthetic loop—so you will often see `SIM target=...` logs without BioSemi. That is fallback simulation, not **`EEG_SIM=1`**. To **force** simulation only (skip the real pipeline), use **`EEG_SIM=1`** in the §4 `docker compose run` example or add that variable under `environment` in `docker-compose.yml`. For **real** acquisition, ensure ActiView/your bridge is reachable at **`BIOSEMI_HOST`** (`host.docker.internal` from the container); set **`EEG_SIM_AUTO=0`** if you do not want automatic fallback to sim when data stops.
+**Simulation vs real EEG (Docker):** `docker-compose.yml` passes **`SIMULATE=${SIMULATE:-1}`** into the `neuro-rave` service, so **`docker compose up` defaults to simulated EEG** (no BioSemi TCP required). For **real hardware**, set **`SIMULATE=0`** (or **`false`**) in the project **`.env`** (Compose reads it for variable substitution) and ensure your TCP bridge is reachable from the container at **`BIOSEMI_HOST`** (default **`host.docker.internal`**) and **`BIOSEMI_PORT`** from `config/constants.json`.
 
-Spotify still needs a valid `./.env` on the host (`SPOTIFY_REFRESH_TOKEN` and mood playlist IDs or `config/spotify_mood_mapping.json`). Restart the stack after changing `.env`.
+The **dashboard** service runs **`npm install && npm run dev`** on startup so Linux-native Rollup/Vite deps populate the anonymous `node_modules` volume (the bind mount over `./dashboard` would otherwise hide image-built modules).
+
+Spotify still needs **`SPOTIFY_REFRESH_TOKEN`** (and mood playlist URIs or `config/spotify_mood_mapping.json`) in `./.env`. Restart the stack after changing `.env`.
 
 ### Running other scripts in the container
 
@@ -98,42 +100,25 @@ docker compose run --rm \
 
 **What happens:** The script starts the playlist for that mood and prints progress for 60 seconds.
 
-#### 4) Docker demo — EEG simulator (`main.py`)
+#### 4) Docker demo — `main.py` with Spotify (optional tuning)
 
-Another way to verify Spotify + mood switching without BioSemi: **forced** simulated EEG cycles
-calm → focus → hype with 60-second steps (`EEG_SIM=1` skips the real TCP/LSL startup). This is stricter than `docker compose up` alone, which uses **real-first + auto fallback** (see the Docker blurb above).
+`docker compose up` already runs **`main.py`** with simulation by default. To run a one-off container with an explicit minimum time between playlist changes:
 
 ```bash
 docker compose run --rm \
-  -e EEG_SIM=1 \
-  -e EEG_SIM_STEP_S=60 \
+  -e SIMULATE=1 \
   -e SPOTIFY_MIN_SWITCH_S=60 \
   neuro-rave python main.py
 ```
 
 What to expect:
-- Logs show `SIM target=calm/focus/hype ...`.
-- Playlists switch about once per minute.
+- Logs show `SIMULATE=true` and per-window lines like `Theta/Beta=... | mood=...`.
+- Spotify only changes context when the **mood bucket** changes **and** at least **`SPOTIFY_MIN_SWITCH_S`** seconds have passed since the last switch (default **60**). Lower it (e.g. `15`) for more responsive playlist changes.
 - Keep a Spotify playback device active.
 
-#### 5) Docker demo — auto fallback (real EEG if present, simulator if missing)
+#### 5) Real EEG in Docker
 
-Use this mode when you want `main.py` to consume real EEG whenever data is available,
-and automatically fall back to simulation when no real chunks arrive.
-
-```bash
-docker compose run --rm \
-  -e EEG_SIM_AUTO=1 \
-  -e EEG_NO_DATA_TIMEOUT_S=2 \
-  -e EEG_SIM_STEP_S=60 \
-  -e SPOTIFY_MIN_SWITCH_S=60 \
-  neuro-rave python main.py
-```
-
-What to expect:
-- Logs show `EEG mode -> REAL` when incoming real data is detected.
-- Logs show `EEG mode -> SIM` after the no-data timeout.
-- Spotify switching behavior remains capped by `SPOTIFY_MIN_SWITCH_S`.
+Set **`SIMULATE=0`** in `.env`, run your BioSemi TCP source on the host at the port in **`config/constants.json`**, and use **`docker compose up`**. The container connects to **`host.docker.internal`** by default.
 
 ## Conda (local development)
 
@@ -143,6 +128,8 @@ conda activate neuro-rave
 pip install -r requirements.txt
 python main.py
 ```
+
+**`.env` for local runs:** `main.py` loads `./.env` **before** reading `config/constants.json`, so you can set **`SIMULATE=1`** or **`EEG_SIM=1`** there for simulation without prefixing the command. Use **`SIMULATE=0`** for real hardware (TCP server on **`BIOSEMI_HOST`/`BIOSEMI_PORT`**). Variables already set in your shell take precedence over `.env` (standard `python-dotenv` behavior).
 
 #### Troubleshooting Spotify
 
@@ -238,7 +225,7 @@ If you intend to run only in Docker, use `docker compose up` or `docker compose 
 
 **`ConnectionRefused` when running in Docker**
 
-The container can't reach `127.0.0.1` on your host. The `BIOSEMI_HOST` env var in `docker-compose.yml` is set to `host.docker.internal` to handle this. Make sure Docker Desktop is up to date.
+Either nothing is listening on the host for the BioSemi TCP port (common if **`SIMULATE=0`** but no bridge is running), or the container can't reach the host. `docker-compose.yml` sets **`BIOSEMI_HOST=host.docker.internal`** for the latter. For demos without hardware, ensure **`SIMULATE=1`** in `.env` or rely on the compose default **`SIMULATE=${SIMULATE:-1}`**.
 
 **Docker build fails pulling the base image**
 

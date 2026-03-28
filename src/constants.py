@@ -6,8 +6,19 @@ from pathlib import Path
 _config_path = Path(__file__).parent.parent / "config" / "constants.json"
 _config = json.loads(_config_path.read_text())
 
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
 ### Mode
-SIMULATE:        bool = _config["SIMULATE"]
+# JSON default; override with SIMULATE=1 or EEG_SIM=1 (legacy) for local/Docker without editing the file.
+if "EEG_SIM" in os.environ:
+    SIMULATE: bool = _env_truthy("EEG_SIM")
+elif "SIMULATE" in os.environ:
+    SIMULATE: bool = _env_truthy("SIMULATE")
+else:
+    SIMULATE: bool = bool(_config["SIMULATE"])
 
 ### Signal Processing
 N_CHANNELS:       int = _config["N_CHANNELS"]

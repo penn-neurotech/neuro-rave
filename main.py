@@ -1,21 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load before src.constants so SIMULATE / EEG_SIM (and Spotify vars) apply to local runs.
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 import logging
 import os
 import time
 from collections import deque
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
 
-from src.streaming.lslbridge import (
-    TCPSource,
-    BioSemi24BitDecoder,
-    LSLPublisher,
-    LSLConsumer,
-    LSLBridge,
-)
-from src.streaming.ws_server import EEGWebSocketServer
 from src.processing.fifo import MirrorCircleBuffer
 import src.constants as const
 from src.music_gen.spotify_controller import (
@@ -25,6 +25,9 @@ from src.music_gen.spotify_controller import (
     classify_mood,
 )
 from src.music_gen.spotify_mapping_store import resolve_mood_playlists
+
+if TYPE_CHECKING:
+    from src.streaming.lslbridge import LSLConsumer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -143,15 +146,16 @@ def generate_sim_chunk() -> np.ndarray:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from pathlib import Path
-
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parent / ".env")
-
-    # ── WebSocket server ──────────────────────────────────────────────────
+    # ── WebSocket server (optional: requires uvicorn, fastapi; pulls LSL for /ws broadcast) ──
     try:
+        from src.streaming.ws_server import EEGWebSocketServer
+
         EEGWebSocketServer().start()
+    except ImportError as exc:
+        logger.warning(
+            "EEG WebSocket server not started (install deps: pip install -r requirements.txt): %s",
+            exc,
+        )
     except Exception as exc:
         logger.warning("EEG WebSocket server not started: %s", exc)
 
@@ -163,6 +167,14 @@ if __name__ == "__main__":
             "SIMULATE=true — using generated EEG signal (features computed from real DSP pipeline)"
         )
     else:
+        from src.streaming.lslbridge import (
+            BioSemi24BitDecoder,
+            LSLBridge,
+            LSLConsumer,
+            LSLPublisher,
+            TCPSource,
+        )
+
         logger.info(
             "SIMULATE=false — connecting to BioSemi at %s:%d",
             const.BIOSEMI_HOST,

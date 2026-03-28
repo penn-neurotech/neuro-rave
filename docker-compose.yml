@@ -4,6 +4,8 @@ services:
     ports:
       - "8733:8733"
     environment:
+      # Default 1 = simulated EEG (no BioSemi TCP on host). For real hardware: SIMULATE=0 or false in .env.
+      - SIMULATE=${SIMULATE:-1}
       - BIOSEMI_HOST=host.docker.internal
       - WS_HOST=0.0.0.0
       - WS_PORT=8733
@@ -31,9 +33,12 @@ services:
     volumes:
       - ./dashboard:/app
       - ./config:/config
+      # Bind mount hides image /app; this volume starts empty — install deps at runtime for Linux (Rollup natives).
       - /app/node_modules
     environment:
       - VITE_WS_URL=ws://localhost:8733/ws
+    # Populate anonymous node_modules volume (Linux arm64/x64 optional deps); image build alone is not enough with ./dashboard:/app.
+    command: sh -c "npm install && npm run dev"
     depends_on:
       - neuro-rave
     restart: unless-stopped
