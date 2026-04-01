@@ -363,12 +363,12 @@ export default function App() {
           <FeatureStatCard
             label="Theta / Beta Ratio"
             value={thetaBetaRatio}
-            subtitle="Attention-related feature"
+            subtitle="Attention-related feature from live EEG stream"
           />
           <FeatureStatCard
             label="Alpha Suppression"
             value={alphaSuppression}
-            subtitle="Engagement-related feature"
+            subtitle="Engagement-related feature from live EEG stream"
           />
         </div>
       </section>
