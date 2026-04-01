@@ -1,39 +1,48 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { useEEGStream } from "./hooks/useEEGStream"
-import { EEGChart } from "./components/EEGChart"
-import { SAMPLE_RATE, WS_PORT } from "./constants"
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useEEGStream } from "./hooks/useEEGStream";
+import { EEGChart } from "./components/EEGChart";
+import { SAMPLE_RATE, WS_PORT } from "./constants";
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? `ws://localhost:${WS_PORT}/ws`
+const WS_URL = import.meta.env.VITE_WS_URL ?? `ws://localhost:${WS_PORT}/ws`;
 
 const moodColors: Record<string, string> = {
   calm: "#60a5fa",
   focus: "#34d399",
   hype: "#f97316",
-}
+};
 
 function getSpotifyPlaylist(mood: string): string {
   const playlists: Record<string, string> = {
     calm: "Ambient Reset",
     focus: "Deep Focus Flow",
     hype: "High Energy Boost",
-  }
-  return playlists[mood]
+  };
+  return playlists[mood];
 }
 
 function getSunoPrompt(mood: string): string {
   const prompts: Record<string, string> = {
     calm: "Slow ambient pads with soft textures and peaceful atmosphere",
-    focus: "Minimal no-vocal focus music with steady rhythm and low distraction",
+    focus:
+      "Minimal no-vocal focus music with steady rhythm and low distraction",
     hype: "High-energy techno with driving percussion and exciting momentum",
-  }
-  return prompts[mood]
+  };
+  return prompts[mood];
 }
 
 function formatPercent(value: number): string {
-  return `${Math.round(value * 100)}%`
+  return `${Math.round(value * 100)}%`;
 }
 
-function MetricCard({ label, value, accent }: { label: string; value: number; accent: string }) {
+function MetricCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  accent: string;
+}) {
   return (
     <div className="card">
       <div className="card-label">{label}</div>
@@ -45,7 +54,29 @@ function MetricCard({ label, value, accent }: { label: string; value: number; ac
         />
       </div>
     </div>
-  )
+  );
+}
+
+function FeatureStatCard({
+  label,
+  value,
+  subtitle,
+}: {
+  label: string;
+  value: number;
+  subtitle?: string;
+}) {
+  const numericValue = Number(value);
+
+  return (
+    <div className="card">
+      <div className="card-label">{label}</div>
+      <div className="big-text">
+        {Number.isFinite(numericValue) ? numericValue.toFixed(2) : "—"}
+      </div>
+      {subtitle ? <div className="small-text">{subtitle}</div> : null}
+    </div>
+  );
 }
 
 function StatusBadge({ text, color }: { text: string; color: string }) {
@@ -53,7 +84,7 @@ function StatusBadge({ text, color }: { text: string; color: string }) {
     <span className="status-badge" style={{ backgroundColor: color }}>
       {text}
     </span>
-  )
+  );
 }
 
 function LogItem({ text, time }: { text: string; time: string }) {
@@ -62,22 +93,27 @@ function LogItem({ text, time }: { text: string; time: string }) {
       <span className="log-time">{time}</span>
       <span>{text}</span>
     </div>
-  )
+  );
 }
 
 interface HistoryPoint {
-  time: string
-  energy: number
-  focus: number
+  time: string;
+  energy: number;
+  focus: number;
 }
 
-function TinyBarChart({ history, metricKey, color, title }: {
-  history: HistoryPoint[]
-  metricKey: "energy" | "focus"
-  color: string
-  title: string
+function TinyBarChart({
+  history,
+  metricKey,
+  color,
+  title,
+}: {
+  history: HistoryPoint[];
+  metricKey: "energy" | "focus";
+  color: string;
+  title: string;
 }) {
-  const maxHeight = 120
+  const maxHeight = 120;
 
   return (
     <div className="chart-card">
@@ -98,75 +134,94 @@ function TinyBarChart({ history, metricKey, color, title }: {
         ))}
       </div>
     </div>
-  )
+  );
 }
 
 export default function App() {
-  const { buffer, features, connected } = useEEGStream(WS_URL)
+  const { buffer, features, connected } = useEEGStream(WS_URL);
 
-  const [musicMode, setMusicMode] = useState("Spotify")
-  const [history, setHistory] = useState<HistoryPoint[]>([])
-  const [generationStatus, setGenerationStatus] = useState("Idle")
+  const [musicMode, setMusicMode] = useState("Spotify");
+  const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [generationStatus, setGenerationStatus] = useState("Idle");
   const [logs, setLogs] = useState([
     { time: new Date().toLocaleTimeString(), text: "Dashboard started" },
-  ])
-  const prevMoodRef = useRef<string | null>(null)
+  ]);
+  const prevMoodRef = useRef<string | null>(null);
 
-  const energy = features?.energy ?? 0
-  const focus = features?.focus ?? 0
-  const mood = features?.mood ?? "calm"
-  const currentPlaylist = useMemo(() => getSpotifyPlaylist(mood), [mood])
-  const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood])
+  const energy = features?.energy ?? 0;
+  const focus = features?.focus ?? 0;
+  const mood = features?.mood ?? "calm";
+  const thetaBetaRatio = features?.theta_beta_ratio ?? 0;
+  const alphaSuppression = features?.alpha_suppression ?? 0;
+  const currentPlaylist = useMemo(() => getSpotifyPlaylist(mood), [mood]);
+  const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood]);
 
   // Build Float32Array[] channels from the FIFO buffer for EEGChart
   const channels: Float32Array[] = buffer
-    ? buffer.getData().map(ch => new Float32Array(ch))
-    : []
+    ? buffer.getData().map((ch) => new Float32Array(ch))
+    : [];
 
   // Update history and logs when features arrive
   useEffect(() => {
-    if (!features) return
+    if (!features) return;
 
-    const now = new Date().toLocaleTimeString()
+    const now = new Date().toLocaleTimeString();
 
     setHistory((prev) => {
-      const updated = [...prev, { time: now, energy: features.energy, focus: features.focus }]
-      return updated.slice(-8)
-    })
-
-    const prevMood = prevMoodRef.current
-    if (prevMood !== null && features.mood !== prevMood) {
-      setLogs((prev) => [
-        { time: now, text: `Mood changed from ${prevMood} to ${features.mood}` },
+      const updated = [
         ...prev,
-      ].slice(0, 8))
+        { time: now, energy: features.energy, focus: features.focus },
+      ];
+      return updated.slice(-8);
+    });
+
+    const prevMood = prevMoodRef.current;
+    if (prevMood !== null && features.mood !== prevMood) {
+      setLogs((prev) =>
+        [
+          {
+            time: now,
+            text: `Mood changed from ${prevMood} to ${features.mood}`,
+          },
+          ...prev,
+        ].slice(0, 8),
+      );
 
       if (musicMode === "Spotify") {
-        setLogs((prev) => [
-          { time: now, text: `Spotify switched to "${getSpotifyPlaylist(features.mood)}"` },
-          ...prev,
-        ].slice(0, 8))
+        setLogs((prev) =>
+          [
+            {
+              time: now,
+              text: `Spotify switched to "${getSpotifyPlaylist(features.mood)}"`,
+            },
+            ...prev,
+          ].slice(0, 8),
+        );
       }
 
       if (musicMode === "Suno") {
-        setGenerationStatus("Generating")
-        setLogs((prev) => [
-          { time: now, text: `Suno requested a new ${features.mood} track` },
-          ...prev,
-        ].slice(0, 8))
+        setGenerationStatus("Generating");
+        setLogs((prev) =>
+          [
+            { time: now, text: `Suno requested a new ${features.mood} track` },
+            ...prev,
+          ].slice(0, 8),
+        );
 
         setTimeout(() => {
-          setGenerationStatus("Ready")
-          const readyTime = new Date().toLocaleTimeString()
-          setLogs((prev) => [
-            { time: readyTime, text: "Suno track finished generating" },
-            ...prev,
-          ].slice(0, 8))
-        }, 2500)
+          setGenerationStatus("Ready");
+          const readyTime = new Date().toLocaleTimeString();
+          setLogs((prev) =>
+            [
+              { time: readyTime, text: "Suno track finished generating" },
+              ...prev,
+            ].slice(0, 8),
+          );
+        }, 2500);
       }
     }
-    prevMoodRef.current = features.mood
-  }, [features, musicMode])
+    prevMoodRef.current = features.mood;
+  }, [features, musicMode]);
 
   return (
     <div className="app-shell">
@@ -174,7 +229,8 @@ export default function App() {
         <div>
           <h1>EEG-Powered Music Dashboard</h1>
           <p className="subtitle">
-            Frontend dashboard for live brain metrics, mood detection, and music response.
+            Frontend dashboard for live brain metrics, mood detection, and music
+            response.
           </p>
         </div>
 
@@ -194,7 +250,9 @@ export default function App() {
           <EEGChart channels={channels} sampleRate={SAMPLE_RATE} />
         ) : (
           <p style={{ color: "#94a3b8" }}>
-            {connected ? "Waiting for EEG data..." : "Connecting to WebSocket server..."}
+            {connected
+              ? "Waiting for EEG data..."
+              : "Connecting to WebSocket server..."}
           </p>
         )}
       </section>
@@ -221,9 +279,21 @@ export default function App() {
               Mood is classified from EEG-derived energy values.
             </p>
             <div className="legend-row">
-              <span className={`legend-pill ${mood === "calm" ? "active" : ""}`}>Calm</span>
-              <span className={`legend-pill ${mood === "focus" ? "active" : ""}`}>Focus</span>
-              <span className={`legend-pill ${mood === "hype" ? "active" : ""}`}>Hype</span>
+              <span
+                className={`legend-pill ${mood === "calm" ? "active" : ""}`}
+              >
+                Calm
+              </span>
+              <span
+                className={`legend-pill ${mood === "focus" ? "active" : ""}`}
+              >
+                Focus
+              </span>
+              <span
+                className={`legend-pill ${mood === "hype" ? "active" : ""}`}
+              >
+                Hype
+              </span>
             </div>
           </div>
         </div>
@@ -234,13 +304,17 @@ export default function App() {
           <h2>Music Control Panel</h2>
           <div className="button-row">
             <button
-              className={musicMode === "Spotify" ? "toggle-btn active-btn" : "toggle-btn"}
+              className={
+                musicMode === "Spotify" ? "toggle-btn active-btn" : "toggle-btn"
+              }
               onClick={() => setMusicMode("Spotify")}
             >
               Spotify Mode
             </button>
             <button
-              className={musicMode === "Suno" ? "toggle-btn active-btn" : "toggle-btn"}
+              className={
+                musicMode === "Suno" ? "toggle-btn active-btn" : "toggle-btn"
+              }
               onClick={() => setMusicMode("Suno")}
             >
               Suno Mode
@@ -283,6 +357,22 @@ export default function App() {
         )}
       </section>
 
+      <section className="panel">
+        <h2>Neuro Features</h2>
+        <div className="music-grid">
+          <FeatureStatCard
+            label="Theta / Beta Ratio"
+            value={thetaBetaRatio}
+            subtitle="Attention-related feature"
+          />
+          <FeatureStatCard
+            label="Alpha Suppression"
+            value={alphaSuppression}
+            subtitle="Engagement-related feature"
+          />
+        </div>
+      </section>
+
       <section className="charts-grid">
         <TinyBarChart
           history={history}
@@ -307,5 +397,5 @@ export default function App() {
         </div>
       </section>
     </div>
-  )
+  );
 }
