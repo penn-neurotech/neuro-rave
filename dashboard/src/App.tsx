@@ -137,6 +137,23 @@ function TinyBarChart({
   );
 }
 
+function EmptyChartCard({ title }: { title: string }) {
+  return (
+    <div
+      className="chart-card"
+      style={{
+        minHeight: "110px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+      }}
+    >
+      <div className="chart-title">{title}</div>
+      <div className="small-text">Waiting for live feature updates...</div>
+    </div>
+  );
+}
+
 export default function App() {
   const { buffer, features, connected } = useEEGStream(WS_URL);
 
@@ -151,8 +168,23 @@ export default function App() {
   const energy = features?.energy ?? 0;
   const focus = features?.focus ?? 0;
   const mood = features?.mood ?? "calm";
+  const connectionStatusText = connected
+    ? "Connected to EEG stream"
+    : "Connecting to EEG stream...";
   const thetaBetaRatio = features?.theta_beta_ratio ?? 0;
   const alphaSuppression = features?.alpha_suppression ?? 0;
+  const neuroFeatureCards = [
+    {
+      label: "Theta / Beta Ratio",
+      value: thetaBetaRatio,
+      subtitle: "Attention-related feature from live EEG stream",
+    },
+    {
+      label: "Alpha Suppression",
+      value: alphaSuppression,
+      subtitle: "Engagement-related feature from live EEG stream",
+    },
+  ];
   const currentPlaylist = useMemo(() => getSpotifyPlaylist(mood), [mood]);
   const currentPrompt = useMemo(() => getSunoPrompt(mood), [mood]);
 
@@ -236,7 +268,7 @@ export default function App() {
 
         <div className="header-statuses">
           <StatusBadge
-            text={connected ? "Connected" : "Disconnected"}
+            text={connected ? "Connected" : "Connecting"}
             color={connected ? "#16a34a" : "#dc2626"}
           />
           <StatusBadge text={`Mode: ${musicMode}`} color="#1d4ed8" />
@@ -249,11 +281,13 @@ export default function App() {
         {channels.length > 0 ? (
           <EEGChart channels={channels} sampleRate={SAMPLE_RATE} />
         ) : (
-          <p style={{ color: "#94a3b8" }}>
-            {connected
-              ? "Waiting for EEG data..."
-              : "Connecting to WebSocket server..."}
-          </p>
+          <div
+            className="small-text"
+            style={{ display: "flex", alignItems: "center", gap: "8px" }}
+          >
+            <span className="pulse-dot" />
+            {connectionStatusText}
+          </div>
         )}
       </section>
 
@@ -360,32 +394,39 @@ export default function App() {
       <section className="panel">
         <h2>Neuro Features</h2>
         <div className="music-grid">
-          <FeatureStatCard
-            label="Theta / Beta Ratio"
-            value={thetaBetaRatio}
-            subtitle="Attention-related feature from live EEG stream"
-          />
-          <FeatureStatCard
-            label="Alpha Suppression"
-            value={alphaSuppression}
-            subtitle="Engagement-related feature from live EEG stream"
-          />
+          {neuroFeatureCards.map((feature) => (
+            <FeatureStatCard
+              key={feature.label}
+              label={feature.label}
+              value={feature.value}
+              subtitle={feature.subtitle}
+            />
+          ))}
         </div>
       </section>
 
       <section className="charts-grid">
-        <TinyBarChart
-          history={history}
-          metricKey="energy"
-          color="#f97316"
-          title="Energy History"
-        />
-        <TinyBarChart
-          history={history}
-          metricKey="focus"
-          color="#34d399"
-          title="Focus History"
-        />
+        {history.length > 0 ? (
+          <>
+            <TinyBarChart
+              history={history}
+              metricKey="energy"
+              color="#f97316"
+              title="Energy History"
+            />
+            <TinyBarChart
+              history={history}
+              metricKey="focus"
+              color="#34d399"
+              title="Focus History"
+            />
+          </>
+        ) : (
+          <>
+            <EmptyChartCard title="Energy History" />
+            <EmptyChartCard title="Focus History" />
+          </>
+        )}
       </section>
 
       <section className="panel">
