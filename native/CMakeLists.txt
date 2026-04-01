@@ -82,7 +82,25 @@ add_executable(neuro_ws_server
 target_include_directories(neuro_ws_server PRIVATE include)
 target_link_libraries(neuro_ws_server PRIVATE ${LSL_TARGET} ${LWS_TARGET})
 
+# ── neuro_lsl_bridge_c (C version) ────────────────────────────────────────────
+
+add_executable(neuro_lsl_bridge_c
+    ${CONFIG_SRC}
+    src/lsl_bridge_c.c)
+
+target_include_directories(neuro_lsl_bridge_c PRIVATE include)
+target_link_libraries(neuro_lsl_bridge_c PRIVATE ${LSL_TARGET})
+
+# ── neuro_ws_server_c (C version) ─────────────────────────────────────────────
+
+add_executable(neuro_ws_server_c
+    ${CONFIG_SRC}
+    src/ws_server_c.c)
+
+target_include_directories(neuro_ws_server_c PRIVATE include)
+target_link_libraries(neuro_ws_server_c PRIVATE ${LSL_TARGET} ${LWS_TARGET})
+
 # ── Installation ──────────────────────────────────────────────────────────────
 
-install(TARGETS neuro_lsl_bridge neuro_ws_server
+install(TARGETS neuro_lsl_bridge neuro_ws_server neuro_lsl_bridge_c neuro_ws_server_c
     RUNTIME DESTINATION bin)
