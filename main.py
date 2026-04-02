@@ -4,13 +4,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load before src.constants so SIMULATE / EEG_SIM (and Spotify vars) apply to local runs.
-load_dotenv(Path(__file__).resolve().parent / ".env")
+_PROJECT_ROOT = Path(__file__).resolve().parent
 
+# Load before src.constants so SIMULATE / EEG_SIM (and Spotify vars) apply to local runs.
+load_dotenv(_PROJECT_ROOT / ".env")
+
+import argparse
 import logging
 import os
 import time
-from collections import deque
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -18,13 +20,18 @@ from scipy.signal import butter, lfilter, iirnotch
 
 from src.processing.fifo import MirrorCircleBuffer
 import src.constants as const
+from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
 from src.music_gen.spotify_controller import (
+    MoodStabilizer,
     NeuroFeatures as SpotifyNeuroFeatures,
     SpotifyClient,
     SpotifyNeuroController,
-    classify_mood,
+    SpotifyNeuroRecommendationController,
+    propose_mood,
 )
 from src.music_gen.spotify_mapping_store import resolve_mood_playlists
+from src.music_gen.spotify_pool_controller import SpotifyNeuroPoolController
+from src.music_gen.track_pool import TrackPool
 
 if TYPE_CHECKING:
     from src.streaming.lslbridge import LSLConsumer
@@ -108,44 +115,111 @@ class EEGProcessor:
         }
 
 
-# ── Feature → Spotify mapping ─────────────────────────────────────────────────
+# ── Simulated EEG (raw only; DSP + feature maps match real pipeline) ─────────
 
-energy_history: deque[float] = deque(maxlen=50)
-
-
-def features_to_spotify(eeg_features: dict) -> SpotifyNeuroFeatures:
-    alpha_sup_mean = float(np.mean(eeg_features["alpha_suppression"]))
-    energy_raw = float(np.clip(alpha_sup_mean, -50.0, 100.0))
-    energy_history.append(energy_raw)
-    e_min = min(energy_history)
-    e_max = max(energy_history)
-    if (e_max - e_min) < 1e-9:
-        energy = 0.5
-    else:
-        energy = float(np.clip((energy_raw - e_min) / (e_max - e_min), 0.0, 1.0))
-
-    tb_mean = float(np.mean(eeg_features["theta_beta_ratio"]))
-    focus = float(np.clip((3.0 - tb_mean) / 2.5, 0.0, 1.0))
-
-    return SpotifyNeuroFeatures(energy=energy, focus=focus)
+_sim_clock_t0: float | None = None
+_sim_abs_time: float = 0.0
+_sim_last_phase: str | None = None
 
 
-# ── Simulated EEG signal (raw signal only, features are computed normally) ────
+def _sim_phase_name(elapsed: float) -> str:
+    plen = max(5.0, float(const.SIM_PHASE_SECONDS))
+    cyc = elapsed % (3.0 * plen)
+    if cyc < plen:
+        return "calm"
+    if cyc < 2.0 * plen:
+        return "focus"
+    return "hype"
+
 
 def generate_sim_chunk() -> np.ndarray:
-    """Generate one window of simulated raw EEG signal (no feature simulation)."""
-    t = np.arange(const.WINDOW_SIZE, dtype=np.float32) / float(const.SAMPLE_RATE)
-    signal_1d = (
-        0.5 * np.sin(2 * np.pi * 10.0 * t)
-        + 0.3 * np.sin(2 * np.pi * 20.0 * t)
-        + np.random.normal(scale=0.2, size=const.WINDOW_SIZE)
-    ).astype(np.float32)
-    return np.tile(signal_1d[:, None], (1, const.N_CHANNELS))
+    """Rotate calm → focus → hype every ``SIM_PHASE_SECONDS`` (wall clock).
+
+    Band content is engineered so bandpower / theta-beta land in ranges that
+    map to each mood after the real ``EEGProcessor`` pipeline.
+    """
+    global _sim_clock_t0, _sim_abs_time, _sim_last_phase
+
+    if _sim_clock_t0 is None:
+        _sim_clock_t0 = time.monotonic()
+
+    elapsed = time.monotonic() - _sim_clock_t0
+    phase = _sim_phase_name(elapsed)
+    if phase != _sim_last_phase:
+        logger.info(
+            "SIM phase -> %s (%.0f s per mood, then rotate)",
+            phase,
+            float(const.SIM_PHASE_SECONDS),
+        )
+        _sim_last_phase = phase
+
+    fs = float(const.SAMPLE_RATE)
+    n = int(const.WINDOW_SIZE)
+    rng = np.random.default_rng()
+
+    t0 = _sim_abs_time
+    t_vec = np.arange(n, dtype=np.float64) / fs + t0
+    _sim_abs_time += n / fs
+
+    out = np.zeros((n, const.N_CHANNELS), dtype=np.float32)
+    for c in range(const.N_CHANNELS):
+        t = t_vec * (1.0 + 0.015 * c)
+        if phase == "calm":
+            # Alpha/theta-heavy, low beta → higher theta/beta, lower “energy” after pipeline
+            sig = (
+                1.2 * np.sin(2 * np.pi * 10.0 * t)
+                + 0.42 * np.sin(2 * np.pi * 6.5 * t)
+                + 0.28 * np.sin(2 * np.pi * 4.0 * t)
+            )
+        elif phase == "focus":
+            # Beta-rich with moderate alpha → lower theta/beta, mid energy
+            sig = (
+                0.52 * np.sin(2 * np.pi * 18.5 * t)
+                + 0.48 * np.sin(2 * np.pi * 12.0 * t)
+                + 0.22 * np.sin(2 * np.pi * 10.0 * t)
+            )
+        else:
+            # Beta + high-frequency content → high beta/gamma, high energy
+            sig = (
+                0.48 * np.sin(2 * np.pi * 24.0 * t)
+                + 0.42 * np.sin(2 * np.pi * 32.0 * t)
+                + 0.38 * np.sin(2 * np.pi * 38.0 * t)
+            )
+        sig = sig + rng.standard_normal(n) * 0.11
+        out[:, c] = sig.astype(np.float32)
+    return out
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="NEURO-RAVE — EEG-driven Spotify")
+    mx = ap.add_mutually_exclusive_group()
+    mx.add_argument(
+        "--spotify-playlist",
+        action="store_true",
+        help="Spotify: mood → playlist/album (context). Overrides SPOTIFY_PLAYBACK_MODE.",
+    )
+    mx.add_argument(
+        "--spotify-recommendations",
+        action="store_true",
+        help="Spotify: EEG → recommendations API → single track. Requires SPOTIFY_SEED_GENRES.",
+    )
+    mx.add_argument(
+        "--spotify-pool",
+        action="store_true",
+        help="Spotify: EEG → local CSV track pool (nearest energy/valence/tempo). See SPOTIFY_TRACK_POOL_CSV.",
+    )
+    args = ap.parse_args()
+    if args.spotify_playlist:
+        spotify_cli_mode = "context"
+    elif args.spotify_recommendations:
+        spotify_cli_mode = "recommendations"
+    elif args.spotify_pool:
+        spotify_cli_mode = "pool"
+    else:
+        spotify_cli_mode = None
+
     # ── WebSocket server (optional: requires uvicorn, fastapi; pulls LSL for /ws broadcast) ──
     try:
         from src.streaming.ws_server import EEGWebSocketServer
@@ -200,26 +274,70 @@ if __name__ == "__main__":
     processor = EEGProcessor(window_seconds=1.0)
 
     # ── Spotify controller (optional) ─────────────────────────────────────
-    spotify_controller: SpotifyNeuroController | None = None
+    spotify_controller: (
+        SpotifyNeuroController | SpotifyNeuroRecommendationController | SpotifyNeuroPoolController | None
+    ) = None
     refresh_token = os.environ.get("SPOTIFY_REFRESH_TOKEN", "").strip()
     if refresh_token:
-        mood_playlists = resolve_mood_playlists()
-        if mood_playlists:
-            spotify_controller = SpotifyNeuroController(
-                SpotifyClient(
-                    client_id=const.SPOTIFY_CLIENT_ID,
-                    client_secret=const.SPOTIFY_CLIENT_SECRET,
-                    refresh_token=refresh_token,
-                ),
-                mood_playlists,
-            )
-            logger.info("Spotify neuro controller enabled.")
+        if spotify_cli_mode is not None:
+            playback_mode = spotify_cli_mode
         else:
-            logger.warning(
-                "Spotify token set but no mood playlists configured — Spotify disabled."
+            em = os.environ.get("SPOTIFY_PLAYBACK_MODE", "context").strip().lower()
+            playback_mode = em if em in ("context", "recommendations", "pool") else "context"
+        spotify = SpotifyClient(
+            client_id=const.SPOTIFY_CLIENT_ID,
+            client_secret=const.SPOTIFY_CLIENT_SECRET,
+            refresh_token=refresh_token,
+        )
+        if playback_mode == "recommendations":
+            raw = os.environ.get("SPOTIFY_SEED_GENRES", "").strip()
+            genres = [g.strip() for g in raw.split(",") if g.strip()][:5]
+            if not genres:
+                logger.warning(
+                    "Recommendations mode requires SPOTIFY_SEED_GENRES "
+                    "(comma-separated Spotify genre seeds, max 5) — Spotify disabled."
+                )
+            else:
+                spotify_controller = SpotifyNeuroRecommendationController(spotify, genres)
+                logger.info(
+                    "Spotify recommendation (single-track) mode enabled seeds=%s",
+                    genres,
+                )
+        elif playback_mode == "pool":
+            csv_path = (
+                os.environ.get("SPOTIFY_TRACK_POOL_CSV", "").strip()
+                or str(_PROJECT_ROOT / "config" / "track_pool.csv")
             )
+            pool = TrackPool.from_csv(csv_path)
+            if pool.size == 0:
+                logger.warning(
+                    "Spotify pool mode: no tracks loaded from %s — copy e.g. TidyTuesday "
+                    "spotify_songs.csv to config/track_pool.csv or set SPOTIFY_TRACK_POOL_CSV.",
+                    csv_path,
+                )
+            else:
+                spotify_controller = SpotifyNeuroPoolController(spotify, pool)
+                logger.info(
+                    "Spotify track-pool mode enabled (%d tracks, CSV=%s). "
+                    "Interval=%.0fs (SPOTIFY_POOL_MIN_INTERVAL_S).",
+                    pool.size,
+                    csv_path,
+                    float(os.environ.get("SPOTIFY_POOL_MIN_INTERVAL_S", "45") or "45"),
+                )
+        else:
+            mood_playlists = resolve_mood_playlists()
+            if mood_playlists:
+                spotify_controller = SpotifyNeuroController(spotify, mood_playlists)
+                logger.info("Spotify playlist/context mode enabled.")
+            else:
+                logger.warning(
+                    "Spotify token set but no mood playlists configured — Spotify disabled."
+                )
     else:
         logger.info("No SPOTIFY_REFRESH_TOKEN — Spotify disabled.")
+
+    mood_stabilizer = MoodStabilizer()
+    spotify_feature_pipeline = SpotifyFeaturePipeline()
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
@@ -240,20 +358,28 @@ if __name__ == "__main__":
             continue
 
         eeg_features = processor.process_window()
-        spotify_features = features_to_spotify(eeg_features)
-        mood = classify_mood(spotify_features)
+        raw_feat = spotify_feature_pipeline.process(eeg_features)
+        se, sf, d_e = mood_stabilizer.smooth(raw_feat.energy, raw_feat.focus)
+        spotify_features = SpotifyNeuroFeatures(energy=se, focus=sf, d_energy=d_e)
+        proposed = propose_mood(spotify_features)
+        mood = mood_stabilizer.majority_mood(proposed)
 
         logger.info(
-            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | energy=%.2f focus=%.2f | mood=%s",
+            "Theta/Beta=%.2f | Alpha Sup=%.1f%% | e_in=%.2f f_in=%.2f | "
+            "e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
             float(np.mean(eeg_features["theta_beta_ratio"])),
             float(np.mean(eeg_features["alpha_suppression"])),
+            raw_feat.energy,
+            raw_feat.focus,
             spotify_features.energy,
             spotify_features.focus,
+            d_e,
             mood,
+            proposed,
         )
 
         if spotify_controller is not None:
             try:
-                spotify_controller.update(spotify_features)
+                spotify_controller.update(spotify_features, stable_mood=mood)
             except Exception as exc:
                 logger.warning("Spotify update failed: %s", exc)

@@ -57,9 +57,14 @@ def load_mood_playlists() -> dict[str, list[str]] | None:
         uris = normalize_context_uris(v)
         if uris:
             out[k] = uris
-    if len(out) == 3:
-        return out
-    return None
+    if not all(k in out for k in ("calm", "focus", "hype")):
+        return None
+    for k in ("deep_focus",):
+        v = data.get(k)
+        uris = normalize_context_uris(v)
+        if uris:
+            out[k] = uris
+    return out
 
 
 def save_mood_playlists(
@@ -105,11 +110,18 @@ def resolve_mood_playlists() -> dict[str, list[str]] | None:
             normalize_context_uris(hype),
         )
         if c and f and h:
-            return {"calm": c, "focus": f, "hype": h}
+            out: dict[str, list[str]] = {"calm": c, "focus": f, "hype": h}
+            df_env = os.environ.get("SPOTIFY_PLAYLIST_DEEP_FOCUS", "").strip()
+            if df_env:
+                dfl = normalize_context_uris(df_env)
+                if dfl:
+                    out["deep_focus"] = dfl
+            return out
 
     try:
         from src.constants import (
             SPOTIFY_PLAYLIST_CALM,
+            SPOTIFY_PLAYLIST_DEEP_FOCUS,
             SPOTIFY_PLAYLIST_FOCUS,
             SPOTIFY_PLAYLIST_HYPE,
         )
@@ -118,7 +130,11 @@ def resolve_mood_playlists() -> dict[str, list[str]] | None:
         f = normalize_context_uris(SPOTIFY_PLAYLIST_FOCUS)
         h = normalize_context_uris(SPOTIFY_PLAYLIST_HYPE)
         if c and f and h:
-            return {"calm": c, "focus": f, "hype": h}
+            out = {"calm": c, "focus": f, "hype": h}
+            dfl = normalize_context_uris(SPOTIFY_PLAYLIST_DEEP_FOCUS)
+            if dfl:
+                out["deep_focus"] = dfl
+            return out
     except ImportError:
         return None
     return None
