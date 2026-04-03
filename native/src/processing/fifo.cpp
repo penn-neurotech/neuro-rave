@@ -86,6 +86,7 @@ void CircularFIFO::addSample(std::vector<float>& sample) {
     if (this->index == 0) {
         this->isFull = true;
     }
+}
 
 void CircularFIFO::addChunk(std::vector<std::vector<float>& chunk) {
     int nSamples = chunk[0].size();
