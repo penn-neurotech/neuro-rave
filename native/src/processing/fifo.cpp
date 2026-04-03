@@ -126,3 +126,9 @@ void CircularFIFO::addChunk(std::vector<std::vector<float>& chunk) {
     }
         
 }
+
+std::vector<std::vector<float>> CircularFIFO::getData() {
+    if (!this->isFull) {
+        return 
+    }
+}
