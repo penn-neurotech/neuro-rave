@@ -82,10 +82,32 @@ Synthesizer::Synthesizer(float sampleRate, float amplitudeLin)
     : sampleRate(sampleRate), amplitudeLin(amplitudeLin) {}
 
 Synthesizer::Synthesizer(std::vector<Oscillator> oscillators, float sampleRate, float amplitudeLin)
-    : oscillators(std::move(oscillators)), sampleRate(sampleRate), amplitudeLin(amplitudeLin) {}
+    : oscillators(std::move(oscillators)), sampleRate(sampleRate), amplitudeLin(amplitudeLin) {
+    invalidateCache();
+}
 
 void Synthesizer::addOscillator(Oscillator oscillator) {
     oscillators.push_back(std::move(oscillator));
+    invalidateCache();
+}
+
+void Synthesizer::invalidateCache() {
+    cacheDirty = true;
+}
+
+void Synthesizer::rebuildCache() {
+    if (!cacheDirty) return;
+    cachedNumOscillators = oscillators.size();
+    cachedNames.resize(cachedNumOscillators);
+    cachedFreqs.resize(cachedNumOscillators);
+    cachedAmplitudes.resize(cachedNumOscillators);
+    for (int i = 0; i < cachedNumOscillators; i++) {
+        cachedNames[i] = oscillators[i].name;
+        cachedFreqs[i] = oscillators[i].freq;
+        cachedAmplitudes[i] = oscillators[i].amplitudeLin;
+    }
+    cachedNormalizedAmps = normalizeNumbers(cachedAmplitudes);
+    cacheDirty = false;
 }
 
 
@@ -99,7 +121,8 @@ std::vector<float> Synthesizer::generateSignalsSample() {
 
 
 int Synthesizer::getNumberOscillators() {
-    return oscillators.size();
+    rebuildCache();
+    return cachedNumOscillators;
 }
 
 std::vector<std::vector<float>> Synthesizer::generateSignalsChunk(int nSamples) {
@@ -122,8 +145,12 @@ float Synthesizer::generateCombinedSample(bool weightOscEqually) {
     if (weightOscEqually) {
         combined = std::accumulate(samples.begin(), samples.end(), 0.f) / nOsc;
     } else {
-        auto amps = getOscillatorAmplitudes();
-        combined = getWeightedAverage(samples, amps);
+        rebuildCache();
+        float sum = 0.f;
+        for (int i = 0; i < nOsc; i++) {
+            sum += samples[i] * cachedNormalizedAmps[i];
+        }
+        combined = sum;
     }
     return amplitudeLin * combined;
 }
@@ -223,13 +250,21 @@ std::vector<Oscillator*> Synthesizer::getOscillatorsByFreqRange(float minFreq, f
 }
 
 std::vector<std::string> Synthesizer::getOscillatorNames() {
-    return getOscillatorFields<std::string>([](const Oscillator& o) { return o.name; });
+    rebuildCache();
+    return cachedNames;
 }
 
 std::vector<float> Synthesizer::getOscillatorFreqs() {
-    return getOscillatorFields<float>([](const Oscillator& o) { return o.freq; });
+    rebuildCache();
+    return cachedFreqs;
 }
 
 std::vector<float> Synthesizer::getOscillatorAmplitudes() {
-    return getOscillatorFields<float>([](const Oscillator& o) { return o.amplitudeLin; });
+    rebuildCache();
+    return cachedAmplitudes;
+}
+
+std::vector<float> Synthesizer::getNormalizedAmplitudes() {
+    rebuildCache();
+    return cachedNormalizedAmps;
 }

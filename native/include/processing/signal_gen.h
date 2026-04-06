@@ -104,10 +104,24 @@ public:
     // by frequency range
     std::vector<Oscillator*> getOscillatorsByFreqRange(float minFreq, float maxFreq);
 
-    // field getters
+    // field getters (cached)
     std::vector<std::string> getOscillatorNames();
     std::vector<float> getOscillatorFreqs();
     std::vector<float> getOscillatorAmplitudes();
+    std::vector<float> getNormalizedAmplitudes();
+
+    // call after modifying oscillator fields directly
+    void invalidateCache();
+
+private:
+    bool cacheDirty = true;
+    int cachedNumOscillators = 0;
+    std::vector<std::string> cachedNames;
+    std::vector<float> cachedFreqs;
+    std::vector<float> cachedAmplitudes;
+    std::vector<float> cachedNormalizedAmps;
+
+    void rebuildCache();
 };
 
 float getWeightedAverage(std::vector<float> numbers);
