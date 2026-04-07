@@ -4,6 +4,7 @@
 
 #include "audio_writer.h"
 #include "channel_array.h"
+#include "config.h"
 #include "fifo.h"
 #include "filter.h"
 #include "signal_gen.h"
@@ -13,11 +14,6 @@
 int main(int argc, char* argv[]) {
     NeuroRaveConfig config = config_load("config/constants.json");
 
-    EEGWebSocketServer ws_server(config.ws_host, config.ws_port);
-    ws_server.start();
-
-    // The downstream consumer is shared by both simulate and live modes.
-    LSLConsumer consumer("EEG");
     MultiSignalFIFO<MirrorCircularFIFO> rawFIFO(config.window_size, config.n_channels);
     AudioWriter audioWriter(config.sample_rate, ma_format_f32, &rawFIFO);
 
@@ -38,11 +34,12 @@ int main(int argc, char* argv[]) {
     std::optional<BioSemi24BitDecoder> decoder;
     std::optional<LSLPublisher>        publisher;
     std::optional<LSLBridge>           bridge;
+    std::optional<LSLConsumer>         consumer;
+    std::optional<EEGWebSocketServer>  ws_server;
 
     if (config.simulate == 1) {
         std::vector<Oscillator> oscillators(
             config.n_channels, Oscillator(config.sample_rate));
-        // Picks the Synthesizer(std::vector<Oscillator>&&, ...) overload.
         synth.emplace(std::move(oscillators), config.sample_rate, 0.5f);
     } else {
         tcp.emplace(config.biosemi_host, config.biosemi_port);
@@ -52,24 +49,23 @@ int main(int argc, char* argv[]) {
                           "biosemi_tcp_bridge");
         bridge.emplace(*tcp, *decoder, *publisher);
         bridge->start();
+
+        consumer.emplace("EEG");
+        ws_server.emplace(config.ws_host, config.ws_port);
+        ws_server->start();
     }
 
-    // synth / tcp / decoder / publisher / bridge / consumer / ws_server are
-    // all live here. Dispatch on synth.has_value() vs bridge.has_value().
     audioWriter.play();
 
     while (true) {
         ChannelArrayView view = chunkBuffer.view();
 
         if (config.simulate) {
-            // Planar end-to-end: synth fills the scratch, rawFIFO consumes it.
             synth->generateSignalsChunk(view);
             rawFIFO.addChunk(view);
         } else {
-            // LSL hands us sample-major data; transpose into planar so the
-            // rest of the pipeline always sees the same layout.
             std::pair<std::vector<double>, std::vector<std::vector<float>>> chunk =
-                consumer.get_chunk(config.window_size);
+                consumer->get_chunk(config.window_size);
             const std::vector<std::vector<float>>& samples = chunk.second;
             int nFrames = static_cast<int>(samples.size());
 
@@ -80,7 +76,6 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Submit only the populated portion (LSL may return < window_size).
             ChannelArrayView populated(view.data(), config.n_channels, nFrames);
             rawFIFO.addChunk(populated);
         }

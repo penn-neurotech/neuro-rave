@@ -2,7 +2,7 @@
   "N_CHANNELS":       8,
   "SAMPLE_RATE":      512,
   "WINDOW_SIZE":      512,
-  "SIMULATE":         false,
+  "SIMULATE":         true,
 
   "BIOSEMI_HOST":     "127.0.0.1",
   "BIOSEMI_PORT":     8888,
