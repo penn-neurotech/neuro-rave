@@ -1,9 +1,13 @@
 {
   "user_id": "default",
-  "calm": "spotify:playlist:REPLACE_WITH_CALM_PLAYLIST_ID",
-  "focus": "spotify:playlist:REPLACE_WITH_FOCUS_PLAYLIST_ID",
-  "hype": "spotify:playlist:REPLACE_WITH_HYPE_PLAYLIST_ID",
-  "calm_uri": "spotify:playlist:REPLACE_WITH_CALM_PLAYLIST_ID",
-  "focus_uri": "spotify:playlist:REPLACE_WITH_FOCUS_PLAYLIST_ID",
-  "hype_uri": "spotify:playlist:REPLACE_WITH_HYPE_PLAYLIST_ID"
+  "calm": [
+    "spotify:playlist:REPLACE_CALM_1",
+    "spotify:playlist:REPLACE_CALM_2"
+  ],
+  "focus": "spotify:playlist:REPLACE_FOCUS_SINGLE_OR_USE_ARRAY",
+  "hype": "spotify:playlist:REPLACE_HYPE",
+  "deep_focus": "spotify:playlist:REPLACE_DEEP_FOCUS_OPTIONAL",
+  "calm_uri": "spotify:playlist:REPLACE_CALM_1",
+  "focus_uri": "spotify:playlist:REPLACE_FOCUS_SINGLE_OR_USE_ARRAY",
+  "hype_uri": "spotify:playlist:REPLACE_HYPE"
 }

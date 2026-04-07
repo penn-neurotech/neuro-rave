@@ -4,8 +4,8 @@ services:
     ports:
       - "8733:8733"
     environment:
-      # Default 1 = simulated EEG (no BioSemi TCP on host). For real hardware: SIMULATE=0 or false in .env.
-      - SIMULATE=${SIMULATE:-1}
+      # Default 0 = real EEG (BioSemi TCP / LSL path). For demos without hardware: SIMULATE=1 in .env.
+      - SIMULATE=${SIMULATE:-0}
       - BIOSEMI_HOST=host.docker.internal
       - WS_HOST=0.0.0.0
       - WS_PORT=8733
@@ -16,6 +16,14 @@ services:
       - SPOTIFY_PLAYLIST_CALM=${SPOTIFY_PLAYLIST_CALM:-}
       - SPOTIFY_PLAYLIST_FOCUS=${SPOTIFY_PLAYLIST_FOCUS:-}
       - SPOTIFY_PLAYLIST_HYPE=${SPOTIFY_PLAYLIST_HYPE:-}
+      - SPOTIFY_PLAYLIST_DEEP_FOCUS=${SPOTIFY_PLAYLIST_DEEP_FOCUS:-}
+      # Playback: context | recommendations | pool (CSV track pool, no /recommendations API).
+      - SPOTIFY_PLAYBACK_MODE=${SPOTIFY_PLAYBACK_MODE:-context}
+      - SPOTIFY_TRACK_POOL_CSV=${SPOTIFY_TRACK_POOL_CSV:-}
+      - SPOTIFY_POOL_MIN_INTERVAL_S=${SPOTIFY_POOL_MIN_INTERVAL_S:-}
+      - SPOTIFY_SEED_GENRES=${SPOTIFY_SEED_GENRES:-}
+      - SPOTIFY_DEVICE_ID=${SPOTIFY_DEVICE_ID:-}
+      - SPOTIFY_MARKET=${SPOTIFY_MARKET:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

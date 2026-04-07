@@ -179,6 +179,7 @@ Components that exist only in Python — candidates for future C/C++ work.
 | `EEGProcessor` (band filters + feature extraction) | `main.py` | `bandpass`, `notch`, `bandpower`, theta/beta ratio, alpha suppression |
 | `MirrorCircleBuffer` | `src/processing/fifo.py` | Circular buffer with mirrored second half for zero-copy windowed reads |
 | `features_to_spotify()` | `main.py` | Maps EEG features → `SpotifyNeuroFeatures` energy/focus |
-| `classify_mood()` | `src/music_gen/spotify_controller.py` | `energy < 0.3 → calm`, `< 0.7 → focus`, else `hype` |
+| `propose_mood()` / `classify_mood()` | `src/music_gen/spotify_controller.py` | 2D buckets: `calm`, `deep_focus`, `focus`, `hype` from `(energy, focus, d_energy)`; `deep_focus` URIs fall back to `focus` |
+| `MoodStabilizer` | `src/music_gen/spotify_controller.py` | EMA + optional majority vote (`SPOTIFY_MOOD_*` env) before Spotify switch |
 | `SpotifyNeuroController` | `src/music_gen/spotify_controller.py` | Mood → playlist URI, throttled switching |
 | `FeaturesPacket` broadcast | `src/streaming/ws_server.py` | Feature JSON over WebSocket (C/C++ WS server currently sends raw only) |
