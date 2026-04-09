@@ -78,6 +78,8 @@ make dashboard      # npm run dev
 ```bash
 docker compose build
 docker compose up
+# macOS helper: starts compose, opens dashboard, then tails logs
+make compose-up-open
 ```
 
 To stop: `docker compose down`
