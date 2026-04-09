@@ -77,12 +77,13 @@ make dashboard      # npm run dev
 
 ```bash
 docker compose build
-docker compose up
-# macOS helper: starts compose, opens dashboard, then tails logs
+# macOS: start stack, open dashboard in browser, tail logs (preferred for demos)
 make compose-up-open
+# or, without auto-opening the browser:
+docker compose up
 ```
 
-To stop: `docker compose down`
+To stop: `docker compose stop`
 
 **Simulation vs real EEG (Docker):** `docker-compose.yml` passes **`SIMULATE=${SIMULATE:-0}`** into the `neuro-rave` service, so **`docker compose up` defaults to real EEG** (expects BioSemi TCP / LSL on the host). For **simulation** without hardware, set **`SIMULATE=1`** (or **`true`**) in the project **`.env`**. Ensure the TCP bridge is reachable from the container at **`BIOSEMI_HOST`** (default **`host.docker.internal`**) and **`BIOSEMI_PORT`** from `config/constants.json`.
 
@@ -185,37 +186,85 @@ To run in simulation mode, set `"SIMULATE": true` in `constants.json`.
 
 ## Spotify Setup
 
-**Requirements:** Spotify Premium + active playback device
+**Requirements:** Spotify **Premium** and a **playback device** (phone, desktop, etc.).
 
-**1. Connect Spotify (recommended)**
+---
 
-Open **`/setup`** and click **Get refresh token (Connect Spotify)**. This runs OAuth in the browser and saves the refresh token to **`config/.spotify_refresh_token`** on the local machine.
+### For users (simple path)
 
-**CLI fallback (optional):**
+Use this when the project already has a working Spotify app configured (someone set **Client ID**, **secret**, and **redirect URI** in the developer dashboard).
+
+1. **Start the app**  
+   - **macOS + Docker:** from the repo root run **`make compose-up-open`** — starts Compose, opens **`http://127.0.0.1:5173`**, and tails logs.  
+   - **Otherwise:** **`docker compose up`**, or **`make run`** plus **`make dashboard`** in two terminals.
+
+2. **Connect your account**  
+   Open **`http://127.0.0.1:5173/setup`** (or **Connect Spotify** on the home dashboard). Finish the browser login. Your refresh token is saved to **`config/.spotify_refresh_token`** (gitignored). If **`SPOTIFY_REFRESH_TOKEN`** is in **`.env`**, that overrides the file.
+
+3. **Pick music per mood**  
+   Choose playlists from the list **or paste** **Share → Copy link** URLs (no manual `spotify:playlist:…` conversion on this page). **Multiple playlists per mood:** comma-separated links in one field. **Save** writes **`config/spotify_mood_mapping.json`**; **`main.py`** reloads without restart; in **playlist** mode, Save may start **calm** if a device is ready.
+
+4. **Wake a device**  
+   Open Spotify and press **Play** once so playback control can attach.
+
+On **`/`**, **Playlist mode** vs **Pool mode** changes how tracks are chosen; playlist mode may send you to **`/setup`**. The active mode is stored in **`config/dashboard_spotify_playback_mode.json`**.
+
+If **Connect Spotify** fails (redirect / **HTTP 400** / “not configured”), a **developer** must fix the Spotify app — see **For developers** below.
+
+---
+
+### For developers (Spotify app, secrets, URLs)
+
+**1. Spotify Developer app**
+
+- In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), open your app → **Settings**.
+- **Redirect URIs:** add the **exact** callback the backend uses. With default **`WS_PORT=8733`**:  
+  **`http://127.0.0.1:8733/spotify/oauth/callback`**  
+  The **Setup** page lists the precise string for your run — use that if it differs (custom port or **`SPOTIFY_OAUTH_REDIRECT_URI`**). **`localhost` and `127.0.0.1` are not interchangeable** for Spotify.
+- Add **test users** / emails if the app is in development mode.
+
+**2. Client ID and Client Secret**
+
+Change these when you use **your own** Spotify app or a new fork:
+
+| Location | Purpose |
+|----------|---------|
+| **`config/constants.json`** | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` — team defaults; **never commit real secrets** to a public repository. |
+| **`.env`** | Same variable names; loaded **before** `constants.json`, so this **overrides** JSON. Prefer this for local secrets. |
+| **Host env + Compose** | `docker-compose.yml` passes `${SPOTIFY_CLIENT_ID}` / `${SPOTIFY_CLIENT_SECRET}` into the container — set them in your shell or `.env` at the project root. |
+
+**3. API port and OAuth**
+
+- OAuth callback and REST live on **`WS_PORT`** (see `config/constants.json`, default **8733**).
+- Flow uses **PKCE**. Persistent **HTTP 400** on login: see [Spotify OAuth migration](https://developer.spotify.com/blog/2025-10-14-reminder-oauth-migration-27-nov-2025); you may need **HTTPS** (e.g. ngrok), register that URL in Spotify, and align **`SPOTIFY_OAUTH_REDIRECT_URI`** / **`SPOTIFY_OAUTH_PUBLIC_HOST`** (see **`docker-compose.yml`** comments).
+
+**4. Playlist source precedence (playlist / context mode)**
+
+1. **`config/spotify_mood_mapping.json`** if **calm**, **focus**, and **hype** are all set  
+2. Else **`SPOTIFY_PLAYLIST_*`** in **`.env`**  
+3. Else **`config/constants.json`**
+
+**5. CLI token helper (optional)**
 
 ```bash
 python get_spotify_refresh_token.py
 ```
 
-The helper writes to `.env` and `config/.spotify_refresh_token`.
+Writes **`.env`** and **`config/.spotify_refresh_token`** if you skip the dashboard.
 
-**2. Mood playlists (calm, focus, hype) — required for context mode**
+**6. Edit mapping without the dashboard**
 
-Context mode maps EEG moods to Spotify **`spotify:playlist:`** or **`spotify:album:`** URIs. The app resolves them in this **order**: **`config/spotify_mood_mapping.json`** (if it defines all three moods), else **`.env`** **`SPOTIFY_PLAYLIST_CALM`**, **`SPOTIFY_PLAYLIST_FOCUS`**, **`SPOTIFY_PLAYLIST_HYPE`**, else the same keys in **`config/constants.json`**.
+- **JSON:** `config/spotify_mood_mapping.json` — **`calm`**, **`focus`**, **`hype`** as `spotify:playlist:` / `spotify:album:` strings or arrays; optional **`deep_focus`**. On-disk JSON must use `spotify:…` URIs (Setup normalizes `https://open.spotify.com/...` on save).
 
-**End-user playlist setup (dashboard):** Run **`main.py`** so the FastAPI/WebSocket server is up on **`WS_PORT`** (default **8733**). Open **`http://localhost:5173/setup`** (Vite dashboard). In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), add the **exact** redirect URI shown on the Setup page. **Spotify no longer allows `http://localhost/...` as a redirect URI** (since April 2025); use the loopback IP form **`http://127.0.0.1:8733/spotify/oauth/callback`** instead. You can set **`SPOTIFY_OAUTH_REDIRECT_URI`** if you use another allowed URI.
+```json
+{
+  "calm": "spotify:playlist:YOUR_CALM_ID",
+  "focus": ["spotify:playlist:AAA", "spotify:playlist:BBB"],
+  "hype": "spotify:playlist:YOUR_HYPE_ID"
+}
+```
 
-The app uses **OAuth with PKCE** on the authorize step (required for many Spotify apps). If you still see **HTTP 400** on `accounts.spotify.com` after a **`docker compose` / `main.py` restart**, check the [Spotify OAuth migration notes](https://developer.spotify.com/blog/2025-10-14-reminder-oauth-migration-27-nov-2025): some accounts may require an **HTTPS** redirect. In that case expose port 8733 with a tunnel (e.g. **ngrok**), register **`https://<your-tunnel-host>/spotify/oauth/callback`** in the Spotify app, and set **`SPOTIFY_OAUTH_REDIRECT_URI`** to that same URL. Click **Connect Spotify**, then choose playlists (or paste **open.spotify.com** links) and **Save**. The refresh token is stored in **`config/.spotify_refresh_token`** (gitignored); **`SPOTIFY_REFRESH_TOKEN`** in **`.env`** still overrides if set. Saving the mapping also **starts playback on the calm playlist** when the app is in **playlist** mode (see below); **`main.py` reloads mappings automatically** without a restart.
-
-**Live dashboard — playlist vs pool:** On **`/`**, **Playlist mode** sets playback to mood playlists and sends you to **`/setup`** to edit URIs. **Save** on Setup persists the mapping, starts calm-context playback (if a device is available), and the back end picks up changes on the next loop. **Pool mode** switches to the CSV track pool and does not open Setup. The active choice is stored in **`config/dashboard_spotify_playback_mode.json`** and overrides **`SPOTIFY_PLAYBACK_MODE`** for `main.py` until you change it again (command-line **`--spotify-*`** flags still win).
-
-- **Get a URI:** in the Spotify app, open the playlist or album → **Share** → **Copy link**. The link contains an ID; convert to API form, e.g.  
-  `https://open.spotify.com/playlist/63K1r9eNMihJJGQ9RE0RMo` → **`spotify:playlist:63K1r9eNMihJJGQ9RE0RMo`**.
-
-**Option A — JSON (recommended)**  
-Copy `config/spotify_mood_mapping.example.json` to **`config/spotify_mood_mapping.json`** and replace the placeholders. Each of **`calm`**, **`focus`**, and **`hype`** must be set (single URI string or JSON array of URIs for rotation). Optional **`deep_focus`**: same as `focus` if omitted.
-
-**Option B — `.env` (Docker forwards these)**  
+- **`.env`:** comma-separated URIs per mood.
 
 ```env
 SPOTIFY_PLAYLIST_CALM=spotify:playlist:YOUR_CALM_ID
@@ -223,39 +272,17 @@ SPOTIFY_PLAYLIST_FOCUS=spotify:playlist:YOUR_FOCUS_ID
 SPOTIFY_PLAYLIST_HYPE=spotify:playlist:YOUR_HYPE_ID
 ```
 
-Multiple URIs per mood: comma-separated (no spaces inside URIs), e.g. `spotify:playlist:AAA,spotify:playlist:BBB`.
+**Default playback** is **context** (`SPOTIFY_PLAYBACK_MODE=context` in Compose when unset). **`main.py --spotify-playlist`** / **`--spotify-pool`** override **`SPOTIFY_PLAYBACK_MODE`** for that run only.
 
-**3. Activate Spotify on a device**
+---
 
-Open the Spotify app and start playing any song.
+### Track pool mode (labeled CSV → nearest track by EEG-derived targets)
 
-**Optional: single-track recommendations (EEG → Spotify audio targets)**
+Use a **CSV** of tracks with **`track_id`**, **`energy`**, **`valence`**, **`tempo`** (BPM)—e.g. [TidyTuesday `spotify_songs.csv`](https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv). The app maps EEG to **`target_energy`**, **`target_valence`**, and **`target_tempo`**, picks a **near neighbor** in that space, then **`PUT /me/player/play`** with that track URI.
 
-**Default is *context* mode** (`SPOTIFY_PLAYBACK_MODE=context` in Compose when unset): mood → fixed playlist/album URIs from step **2**. That path uses **`PUT /me/player/play`** and is what most people should use.
+Optional **`.env`** knobs for those targets: **`SPOTIFY_TARGET_TEMPO_MIN`**, **`SPOTIFY_TARGET_TEMPO_MAX`**. For pool **URI validation** in some regions, set **`SPOTIFY_MARKET`** (ISO country code).
 
-To try **recommendations** instead, add to **`.env`** (also forwarded by `docker-compose.yml`):
-
-```env
-SPOTIFY_PLAYBACK_MODE=recommendations
-SPOTIFY_RECOMMENDATIONS_LIMIT=20
-SPOTIFY_SEED_GENRES=electronic,ambient,chill,house,dance
-SPOTIFY_MARKET=US
-# Optional: SPOTIFY_TARGET_TEMPO_MIN=72  SPOTIFY_TARGET_TEMPO_MAX=148
-```
-
-Use [Spotify’s allowed `seed_genres` values](https://developer.spotify.com/documentation/web-api/reference/get-recommendations) (comma-separated, **max five**; lowercase hyphenated names only). Set **`SPOTIFY_MARKET`** to your **ISO 3166-1 alpha-2** country code (e.g. `US`, `GB`) so the catalog matches your account.
-
-**Limitation:** Spotify’s **`GET /v1/recommendations`** often returns **404** or fails for **many newer or standard developer apps** (API access is restricted for some accounts). If recommendations never work, **stay on context mode**—playlists do not depend on that endpoint.
-
-Each time the **mood bucket** changes (cooldown **`SPOTIFY_MIN_SWITCH_S`**; default **10** seconds, set **`0`** for immediate switches), recommendations mode maps smoothed **`energy`** and **`focus`** to `target_energy`, `target_valence`, and `target_tempo`, then plays a **random** track from the API response.
-
-Other optional **`.env`** knobs: `SPOTIFY_TARGET_TEMPO_MIN`, `SPOTIFY_TARGET_TEMPO_MAX`, `SPOTIFY_RECOMMENDATIONS_LIMIT`.
-
-**Track pool mode (no Recommendations API — continuous-ish single tracks)**
-
-Use a **CSV** of tracks with **`track_id`**, **`energy`**, **`valence`**, **`tempo`** (BPM)—e.g. [TidyTuesday `spotify_songs.csv`](https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv). The app maps EEG (same **`target_energy` / `target_valence` / `target_tempo`** as recommendations) and picks a **near neighbor** in that 3D space, then **`PUT /me/player/play`** one track. Works when **`/recommendations`** is blocked.
-
-1. Copy the CSV to **`config/track_pool.csv`** (see `config/track_pool.example.csv` for column needs), **or** set an absolute path.
+1. Copy the CSV to **`config/track_pool.csv`** (header must include **`track_id`**, **`energy`**, **`valence`**, **`tempo`**), **or** set **`SPOTIFY_TRACK_POOL_CSV`** to an absolute path.
 2. **Essentials:** set **`SPOTIFY_PLAYBACK_MODE=pool`** and have Spotify auth connected (Setup flow token file, or `SPOTIFY_REFRESH_TOKEN` in `.env`). Client ID/secret usually come from **`config/constants.json`** unless you override via **`.env`** / Compose (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`). **`SPOTIFY_DEVICE_ID`** helps if you hit “no active device” (see troubleshooting).
 
 **Minimal example:**
@@ -268,7 +295,7 @@ SPOTIFY_PLAYBACK_MODE=pool
 
 ```env
 # SPOTIFY_TRACK_POOL_CSV=/app/config/track_pool.csv   # default: ./config/track_pool.csv
-# SPOTIFY_POOL_MIN_INTERVAL_S=10                      # default 10; min 5s enforced in code
+# SPOTIFY_POOL_MIN_INTERVAL_S=10                      # default 10; min 10s enforced in code
 # SPOTIFY_POOL_TOP_K=8
 # SPOTIFY_POOL_ON_MOOD_CHANGE_ONLY=0                  # 1 = only change track when voted mood changes
 # SPOTIFY_POOL_HISTORY=24
@@ -283,13 +310,10 @@ SPOTIFY_PLAYBACK_MODE=pool
 | Command | Spotify behavior |
 |---------|------------------|
 | `python main.py --spotify-playlist` | Mood → playlist/album (`context`) |
-| `python main.py --spotify-recommendations` | Recommendations → one track (needs `SPOTIFY_SEED_GENRES`) |
 | `python main.py --spotify-pool` | CSV track pool → nearest feature match (needs pool file) |
 | `python main.py` | Uses **`SPOTIFY_PLAYBACK_MODE`** from `.env` / Compose (default **context**) |
 
-Docker example: `docker compose run --rm -e ... neuro-rave python main.py --spotify-recommendations`
-
-**Mood pipeline (playlist + recommendations)**
+**Mood pipeline**
 
 - **Features:** `energy` blends alpha-suppression min–max (longer history via **`SPOTIFY_ENERGY_HISTORY_MAX`**) with **gamma** arousal (**`SPOTIFY_GAMMA_AROUSAL_WEIGHT`**) and a slow EMA (**`SPOTIFY_ENERGY_SLOW_ALPHA`**, **`SPOTIFY_ENERGY_FAST_WEIGHT`**).
 - **Stabilization:** EMA on energy/focus (**`SPOTIFY_MOOD_EMA_ALPHA`**), then majority vote over the last **`SPOTIFY_MOOD_VOTE_WINDOWS`** proposed moods; set **`SPOTIFY_MOOD_VOTE_OFF=1`** to disable voting.
@@ -297,7 +321,7 @@ Docker example: `docker compose run --rm -e ... neuro-rave python main.py --spot
 
 **4. Simulated EEG + Spotify (`main.py`)**
 
-With **`SIMULATE=1`** in `.env`, **`docker compose up`** runs **`main.py`** with **simulated EEG** (see the Docker section above). The simulator **rotates** band-limited waveforms: **calm → focus → hype**, **`SIM_PHASE_SECONDS`** each (from `constants.json`, default 30), so moods and playlists should follow over time. **`SPOTIFY_MIN_SWITCH_S`** sets a **minimum delay** between Spotify context/recommendation switches (default **10** seconds; **`0`** = switch as soon as the voted mood changes).
+With **`SIMULATE=1`** in `.env`, **`docker compose up`** runs **`main.py`** with **simulated EEG** (see the Docker section above). The simulator **rotates** band-limited waveforms: **calm → focus → hype**, **`SIM_PHASE_SECONDS`** each (from `constants.json`, default 30), so moods and playlists should follow over time. **`SPOTIFY_MIN_SWITCH_S`** sets a **minimum delay** between Spotify **playlist/context** switches when mood changes (default **10** seconds; **`0`** = switch as soon as the voted mood changes).
 
 ```bash
 docker compose run --rm -e SIMULATE=1 neuro-rave python main.py
@@ -326,7 +350,6 @@ python main.py
 
 | Error | Fix |
 |-------|-----|
-| Recommendations **404** / no tracks | Use **`SPOTIFY_PLAYBACK_MODE=pool`** with a labeled CSV, or **`context`** playlists |
 | "Premium required" | Spotify Premium is required for playback control |
 | "No active device found" | Open Spotify and start playing any song first |
 | "User not registered" | Add your email in Spotify Developer Dashboard |

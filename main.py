@@ -200,11 +200,6 @@ if __name__ == "__main__":
         help="Spotify: mood → playlist/album (context). Overrides SPOTIFY_PLAYBACK_MODE.",
     )
     mx.add_argument(
-        "--spotify-recommendations",
-        action="store_true",
-        help="Spotify: EEG → recommendations API → single track. Requires SPOTIFY_SEED_GENRES.",
-    )
-    mx.add_argument(
         "--spotify-pool",
         action="store_true",
         help="Spotify: EEG → local CSV track pool (nearest energy/valence/tempo). See SPOTIFY_TRACK_POOL_CSV.",
@@ -212,8 +207,6 @@ if __name__ == "__main__":
     args = ap.parse_args()
     if args.spotify_playlist:
         spotify_cli_mode = "context"
-    elif args.spotify_recommendations:
-        spotify_cli_mode = "recommendations"
     elif args.spotify_pool:
         spotify_cli_mode = "pool"
     else:

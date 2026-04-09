@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Literal
 
-Mode = Literal["context", "pool", "recommendations"]
+logger = logging.getLogger(__name__)
+
+Mode = Literal["context", "pool"]
+
+_deprecated_recommendations_warned = False
+
+
+def _warn_deprecated_recommendations() -> None:
+    global _deprecated_recommendations_warned
+    if _deprecated_recommendations_warned:
+        return
+    _deprecated_recommendations_warned = True
+    logger.warning(
+        "Playback mode 'recommendations' is no longer supported; using playlist/context instead.",
+    )
 
 
 def _config_dir() -> Path:
@@ -31,7 +46,8 @@ def read_dashboard_playback_mode() -> Mode:
                 if raw == "pool":
                     return "pool"
                 if raw == "recommendations":
-                    return "recommendations"
+                    _warn_deprecated_recommendations()
+                    return "context"
         except (OSError, json.JSONDecodeError):
             pass
     em = os.environ.get("SPOTIFY_PLAYBACK_MODE", "context").strip().lower()
@@ -40,19 +56,18 @@ def read_dashboard_playback_mode() -> Mode:
     if em == "pool":
         return "pool"
     if em == "recommendations":
-        return "recommendations"
+        _warn_deprecated_recommendations()
+        return "context"
     return "context"
 
 
 def write_dashboard_playback_mode(mode: str) -> Mode:
-    """Persist ``context`` (playlist), ``pool``, or ``recommendations``."""
+    """Persist ``context`` (playlist) or ``pool``."""
     m = str(mode).strip().lower()
     if m in ("playlist", "context"):
         norm: Mode = "context"
     elif m == "pool":
         norm = "pool"
-    elif m == "recommendations":
-        norm = "recommendations"
     else:
         raise ValueError(f"unsupported playback mode: {mode!r}")
 

@@ -1,8 +1,7 @@
 """Spotify playback from a local labeled track pool (CSV) + EEG targets.
 
-Does not call ``/v1/recommendations``. Picks tracks by feature-space distance to
-``target_energy`` / ``target_valence`` / ``target_tempo`` from
-:func:`neuro_features_to_recommendation_targets`.
+Picks tracks by feature-space distance to ``target_energy`` / ``target_valence`` /
+``target_tempo`` from :func:`neuro_features_to_pool_targets`.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ import numpy as np
 from src.music_gen.spotify_controller import (
     NeuroFeatures,
     SpotifyClient,
-    neuro_features_to_recommendation_targets,
+    neuro_features_to_pool_targets,
 )
 from src.music_gen.track_pool import TrackPool
 
@@ -135,7 +134,7 @@ class SpotifyNeuroPoolController:
                 return
             self._last_mood = mood
 
-        targets = neuro_features_to_recommendation_targets(features)
+        targets = neuro_features_to_pool_targets(features)
         for _ in range(3):
             exclude: Set[str] = set(self._recent) | self._invalid_uris
             uri = self._pool.pick_nearest(

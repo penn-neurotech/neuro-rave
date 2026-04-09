@@ -7,22 +7,14 @@ import os
 from pathlib import Path
 from typing import Union
 
-from src.music_gen.spotify_controller import (
-    SpotifyClient,
-    SpotifyNeuroController,
-    SpotifyNeuroRecommendationController,
-)
+from src.music_gen.spotify_controller import SpotifyClient, SpotifyNeuroController
 from src.music_gen.spotify_mapping_store import resolve_mood_playlists
 from src.music_gen.spotify_pool_controller import SpotifyNeuroPoolController
 from src.music_gen.track_pool import TrackPool
 
 logger = logging.getLogger(__name__)
 
-SpotifyPlaybackController = Union[
-    SpotifyNeuroController,
-    SpotifyNeuroRecommendationController,
-    SpotifyNeuroPoolController,
-]
+SpotifyPlaybackController = Union[SpotifyNeuroController, SpotifyNeuroPoolController]
 
 
 def build_playback_controller(
@@ -60,17 +52,6 @@ def build_playback_controller(
             csv_path,
         )
         return SpotifyNeuroPoolController(spotify, pool)
-
-    if m == "recommendations":
-        raw = os.environ.get("SPOTIFY_SEED_GENRES", "").strip()
-        genres = [g.strip() for g in raw.split(",") if g.strip()][:5]
-        if not genres:
-            logger.warning(
-                "Recommendations mode requires SPOTIFY_SEED_GENRES — Spotify disabled.",
-            )
-            return None
-        logger.info("Spotify recommendation mode enabled seeds=%s", genres)
-        return SpotifyNeuroRecommendationController(spotify, genres)
 
     logger.warning("Unknown playback mode %r — Spotify disabled.", playback_mode)
     return None
