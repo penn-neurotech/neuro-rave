@@ -86,7 +86,7 @@ To stop: `docker compose down`
 
 The **dashboard** service runs **`npm install && npm run dev`** on startup so Linux-native Rollup/Vite deps populate the anonymous `node_modules` volume (the bind mount over `./dashboard` would otherwise hide image-built modules).
 
-Spotify still needs **`SPOTIFY_REFRESH_TOKEN`** in `./.env`. **Default playback is *context* mode** (mood → your calm/focus/hype playlist or album URIs via `config/spotify_mood_mapping.json` / env). Restart the stack after changing `.env`.
+Spotify auth can now come from the dashboard setup flow: **Connect Spotify** stores a local refresh token at `config/.spotify_refresh_token` (gitignored). You can still set **`SPOTIFY_REFRESH_TOKEN`** in `./.env` for manual/CI runs; if set, env takes precedence. **Default playback is *context* mode** (mood → your calm/focus/hype playlist or album URIs via `config/spotify_mood_mapping.json` / env).
 
 ### Running other scripts in the container
 
@@ -185,18 +185,27 @@ To run in simulation mode, set `"SIMULATE": true` in `constants.json`.
 
 **Requirements:** Spotify Premium + active playback device
 
-**1. Get a refresh token (run once on your host machine)**
+**1. Connect Spotify (recommended)**
+
+Open **`/setup`** and click **Get refresh token (Connect Spotify)**. This runs OAuth in the browser and saves the refresh token to **`config/.spotify_refresh_token`** on the local machine.
+
+**CLI fallback (optional):**
 
 ```bash
 python get_spotify_refresh_token.py
 ```
 
-This writes `SPOTIFY_REFRESH_TOKEN` to `.env`. Restart containers after changing
-`.env`.
+The helper writes to `.env` and `config/.spotify_refresh_token`.
 
 **2. Mood playlists (calm, focus, hype) — required for context mode**
 
 Context mode maps EEG moods to Spotify **`spotify:playlist:`** or **`spotify:album:`** URIs. The app resolves them in this **order**: **`config/spotify_mood_mapping.json`** (if it defines all three moods), else **`.env`** **`SPOTIFY_PLAYLIST_CALM`**, **`SPOTIFY_PLAYLIST_FOCUS`**, **`SPOTIFY_PLAYLIST_HYPE`**, else the same keys in **`config/constants.json`**.
+
+**End-user playlist setup (dashboard):** Run **`main.py`** so the FastAPI/WebSocket server is up on **`WS_PORT`** (default **8733**). Open **`http://localhost:5173/setup`** (Vite dashboard). In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), add the **exact** redirect URI shown on the Setup page. **Spotify no longer allows `http://localhost/...` as a redirect URI** (since April 2025); use the loopback IP form **`http://127.0.0.1:8733/spotify/oauth/callback`** instead. You can set **`SPOTIFY_OAUTH_REDIRECT_URI`** if you use another allowed URI.
+
+The app uses **OAuth with PKCE** on the authorize step (required for many Spotify apps). If you still see **HTTP 400** on `accounts.spotify.com` after a **`docker compose` / `main.py` restart**, check the [Spotify OAuth migration notes](https://developer.spotify.com/blog/2025-10-14-reminder-oauth-migration-27-nov-2025): some accounts may require an **HTTPS** redirect. In that case expose port 8733 with a tunnel (e.g. **ngrok**), register **`https://<your-tunnel-host>/spotify/oauth/callback`** in the Spotify app, and set **`SPOTIFY_OAUTH_REDIRECT_URI`** to that same URL. Click **Connect Spotify**, then choose playlists (or paste **open.spotify.com** links) and **Save**. The refresh token is stored in **`config/.spotify_refresh_token`** (gitignored); **`SPOTIFY_REFRESH_TOKEN`** in **`.env`** still overrides if set. Saving the mapping also **starts playback on the calm playlist** when the app is in **playlist** mode (see below); **`main.py` reloads mappings automatically** without a restart.
+
+**Live dashboard — playlist vs pool:** On **`/`**, **Playlist mode** sets playback to mood playlists and sends you to **`/setup`** to edit URIs. **Save** on Setup persists the mapping, starts calm-context playback (if a device is available), and the back end picks up changes on the next loop. **Pool mode** switches to the CSV track pool and does not open Setup. The active choice is stored in **`config/dashboard_spotify_playback_mode.json`** and overrides **`SPOTIFY_PLAYBACK_MODE`** for `main.py` until you change it again (command-line **`--spotify-*`** flags still win).
 
 - **Get a URI:** in the Spotify app, open the playlist or album → **Share** → **Copy link**. The link contains an ID; convert to API form, e.g.  
   `https://open.spotify.com/playlist/63K1r9eNMihJJGQ9RE0RMo` → **`spotify:playlist:63K1r9eNMihJJGQ9RE0RMo`**.
@@ -245,12 +254,11 @@ Other optional **`.env`** knobs: `SPOTIFY_TARGET_TEMPO_MIN`, `SPOTIFY_TARGET_TEM
 Use a **CSV** of tracks with **`track_id`**, **`energy`**, **`valence`**, **`tempo`** (BPM)—e.g. [TidyTuesday `spotify_songs.csv`](https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-21/spotify_songs.csv). The app maps EEG (same **`target_energy` / `target_valence` / `target_tempo`** as recommendations) and picks a **near neighbor** in that 3D space, then **`PUT /me/player/play`** one track. Works when **`/recommendations`** is blocked.
 
 1. Copy the CSV to **`config/track_pool.csv`** (see `config/track_pool.example.csv` for column needs), **or** set an absolute path.
-2. **`.env` — essentials (same Spotify auth as §1):** you need **`SPOTIFY_REFRESH_TOKEN`** plus **`SPOTIFY_PLAYBACK_MODE=pool`**. Client ID/secret usually come from **`config/constants.json`** unless you override via **`.env`** / Compose (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`). **`SPOTIFY_DEVICE_ID`** helps if you hit “no active device” (see troubleshooting).
+2. **Essentials:** set **`SPOTIFY_PLAYBACK_MODE=pool`** and have Spotify auth connected (Setup flow token file, or `SPOTIFY_REFRESH_TOKEN` in `.env`). Client ID/secret usually come from **`config/constants.json`** unless you override via **`.env`** / Compose (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`). **`SPOTIFY_DEVICE_ID`** helps if you hit “no active device” (see troubleshooting).
 
 **Minimal example:**
 
 ```env
-SPOTIFY_REFRESH_TOKEN=your_token_here
 SPOTIFY_PLAYBACK_MODE=pool
 ```
 

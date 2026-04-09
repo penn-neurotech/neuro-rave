@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 import src.constants as const
+from src.music_gen.spotify_refresh_token import (
+    load_spotify_refresh_token,
+    save_spotify_refresh_token_to_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +202,16 @@ class SpotifyClient:
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0.0
 
+    def update_refresh_token(self, refresh_token: str) -> None:
+        """Hot-swap refresh token without recreating the client."""
+        rt = str(refresh_token).strip()
+        if not rt or rt == self._refresh_token:
+            return
+        self._refresh_token = rt
+        # Force a fresh access-token exchange on next request.
+        self._access_token = None
+        self._token_expires_at = 0.0
+
     def _ensure_access_token(self) -> None:
         if self._access_token and time.time() < self._token_expires_at - 30:
             return
@@ -206,17 +220,42 @@ class SpotifyClient:
             f"{self._client_id}:{self._client_secret}".encode("utf-8")
         ).decode("utf-8")
 
-        resp = requests.post(
-            self.TOKEN_URL,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": self._refresh_token,
-            },
-            headers={"Authorization": f"Basic {auth_header}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
+        # Keep long-running main loop in sync with token rotations saved by API routes.
+        latest = load_spotify_refresh_token()
+        if latest and latest != self._refresh_token:
+            self._refresh_token = latest
+            logger.info("Spotify client picked up refreshed token from local file.")
+
+        def _refresh_once() -> requests.Response:
+            return requests.post(
+                self.TOKEN_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._refresh_token,
+                },
+                headers={"Authorization": f"Basic {auth_header}"},
+                timeout=10,
+            )
+
+        resp = _refresh_once()
+        if resp.status_code != 200:
+            # One recovery attempt: re-read token file in case OAuth callback just rotated it.
+            retry = load_spotify_refresh_token()
+            if retry and retry != self._refresh_token:
+                self._refresh_token = retry
+                logger.info("Spotify token refresh failed; retrying with latest local token.")
+                resp = _refresh_once()
+        if resp.status_code != 200:
+            detail = (resp.text or "").strip()
+            raise RuntimeError(
+                f"Spotify token refresh failed: {resp.status_code} {detail or '(no body)'}"
+            )
         data = resp.json()
+        rotated = str(data.get("refresh_token") or "").strip()
+        if rotated and rotated != self._refresh_token:
+            self._refresh_token = rotated
+            save_spotify_refresh_token_to_file(rotated)
+            logger.info("Spotify refresh token rotated and saved locally.")
 
         self._access_token = data["access_token"]
         # "expires_in" is seconds from now.
@@ -569,6 +608,66 @@ class SpotifyClient:
             raise RuntimeError(
                 f"Spotify playback request failed: {resp.status_code} {resp.text}"
             )
+
+    def get_playable_track_uris(self, uris: List[str]) -> set[str]:
+        """Return subset of ``uris`` that are currently playable in the configured market.
+
+        Uses ``GET /tracks?ids=...`` in chunks and filters out missing/unavailable tracks.
+        """
+        if not uris:
+            return set()
+
+        # Keep first occurrence order and only spotify:track URIs.
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for uri in uris:
+            u = str(uri or "").strip()
+            if not u.startswith("spotify:track:") or u in seen:
+                continue
+            seen.add(u)
+            ordered.append(u)
+        if not ordered:
+            return set()
+
+        market = (os.environ.get("SPOTIFY_MARKET", "") or "").strip()
+        playable: set[str] = set()
+        for i in range(0, len(ordered), 50):
+            batch = ordered[i : i + 50]
+            ids = [u.rsplit(":", 1)[-1] for u in batch]
+            params: Dict[str, Any] = {"ids": ",".join(ids)}
+            if market:
+                params["market"] = market
+            resp = requests.get(
+                f"{self.API_BASE_URL}/tracks",
+                params=params,
+                headers=self._headers(),
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                # If metadata lookup fails, do not aggressively prune.
+                logger.warning(
+                    "Spotify /tracks validation failed (%s); keeping batch unchanged.",
+                    resp.status_code,
+                )
+                playable.update(batch)
+                continue
+
+            tracks = list((resp.json() or {}).get("tracks") or [])
+            for idx, t in enumerate(tracks):
+                if idx >= len(batch):
+                    break
+                if not isinstance(t, dict):
+                    continue
+                # ``None`` track means unavailable; ``is_local`` cannot be played by URI.
+                if t.get("is_local"):
+                    continue
+                if t.get("available_markets") == []:
+                    continue
+                # When ``market`` is passed Spotify may include ``is_playable``.
+                if t.get("is_playable") is False:
+                    continue
+                playable.add(batch[idx])
+        return playable
 
 
 class SpotifyNeuroController:
