@@ -64,7 +64,6 @@ private:
 // Handles multiple oscillators.
 class Synthesizer {
 public:
-    std::vector<Oscillator> oscillators;
     float amplitudeLin;
     float sampleRate;
 
@@ -74,6 +73,12 @@ public:
 
     void addOscillator(const Oscillator& oscillator);
     void addOscillator(Oscillator&& oscillator);
+    void removeOscillator(int idx);
+
+    // Direct access to an oscillator. Mutating freq/amplitudeLin/name
+    // through the returned reference requires calling invalidateCache().
+    Oscillator& getOscillator(int idx) { return oscillators[idx]; }
+    const Oscillator& getOscillator(int idx) const { return oscillators[idx]; }
 
     template<typename... Args>
     Oscillator& emplaceOscillator(Args&&... args) {
@@ -133,6 +138,7 @@ public:
     void invalidateCache();
 
 private:
+    std::vector<Oscillator> oscillators;
     bool cacheDirty = true;
     int cachedNumOscillators = 0;
     std::vector<std::string> cachedNames;

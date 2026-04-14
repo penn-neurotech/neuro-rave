@@ -119,6 +119,15 @@ void Synthesizer::addOscillator(Oscillator&& oscillator) {
     invalidateCache();
 }
 
+void Synthesizer::removeOscillator(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(oscillators.size())) {
+        throw std::out_of_range("removeOscillator: idx " + std::to_string(idx) +
+                                " out of range [0, " + std::to_string(oscillators.size()) + ")");
+    }
+    oscillators.erase(oscillators.begin() + idx);
+    invalidateCache();
+}
+
 void Synthesizer::invalidateCache() {
     cacheDirty = true;
 }

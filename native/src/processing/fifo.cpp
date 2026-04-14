@@ -21,7 +21,12 @@ void applyWindow(const ChannelArrayView& data, const std::string& windowType);
 
 // FIFO base class
 FIFO::FIFO(int size, const std::string& channelName)
-    : size(size), channelName(channelName), isFull(false), data(size, 0.f), writeIdx(0) {}
+    : size(size), mask(size - 1), channelName(channelName), data(size, 0.f), writeIdx(0) {
+    if (!isPowerOfTwo(size)) {
+        throw std::invalid_argument(
+            "FIFO size (" + std::to_string(size) + ") must be a power of two");
+    }
+}
 
 void FIFO::validateRange(int begin, int end, int maxSize, const std::string& name) {
     if (begin < 0 || end > maxSize || begin > end) {
@@ -58,7 +63,7 @@ void FIFO::readDataByRange(std::span<float> result,
 }
 
 int FIFO::getFilledSize() const {
-    return isFull ? size : writeIdx;
+    return writeIdx < size ? static_cast<int>(writeIdx) : size;
 }
 
 // CircularFIFO
@@ -66,9 +71,8 @@ CircularFIFO::CircularFIFO(int size, const std::string& channelName)
     : FIFO(size, channelName) {}
 
 void CircularFIFO::addSample(float sample) {
-    data[writeIdx] = sample;
-    writeIdx = (writeIdx + 1) % size;
-    if (writeIdx == 0) isFull = true;
+    data[writeIdx & mask] = sample;
+    writeIdx++;
 }
 
 void CircularFIFO::addChunk(std::span<const float> chunk) {
@@ -81,32 +85,25 @@ void CircularFIFO::addChunk(std::span<const float> chunk) {
             ". This could lead to data loss. Split chunk into multiple chunks)");
     }
 
-    if (nSamples == size) {
-        writeDataByRange(chunk, 0, nSamples, 0);
-        writeIdx = 0;
-        isFull = true;
-        return;
-    }
-
-    int end = writeIdx + nSamples;
+    int w = static_cast<int>(writeIdx & mask);
+    int end = w + nSamples;
     if (end <= size) {
-        writeDataByRange(chunk, 0, nSamples, writeIdx);
+        writeDataByRange(chunk, 0, nSamples, w);
     } else {
-        int first = size - writeIdx;
-        writeDataByRange(chunk, 0, first, writeIdx);
+        int first = size - w;
+        writeDataByRange(chunk, 0, first, w);
         writeDataByRange(chunk, first, nSamples, 0);
     }
 
-    writeIdx = end % size;
-    if (end >= size) isFull = true;
+    writeIdx += nSamples;
 }
 
 void CircularFIFO::readNSamples(std::span<float> out) {
     int n = static_cast<int>(out.size());
-    int filled = getFilledSize();
-    if (n > filled) n = filled;
+    if (n > size) n = size;
 
-    int start = (writeIdx - n + size) % size;
+    int w = static_cast<int>(writeIdx & mask);
+    int start = (w - n + size) & mask;
 
     if (start + n <= size) {
         readDataByRange(out, start, start + n, 0);
@@ -118,17 +115,13 @@ void CircularFIFO::readNSamples(std::span<float> out) {
 }
 
 void CircularFIFO::readAll(std::span<float> out) {
-    int filled = getFilledSize();
-    if (static_cast<int>(out.size()) < filled) {
+    if (static_cast<int>(out.size()) < size) {
         throw std::invalid_argument("readAll output buffer too small");
     }
-    if (!isFull) {
-        readDataByRange(out, 0, writeIdx, 0);
-    } else {
-        int tail = size - writeIdx;
-        readDataByRange(out, writeIdx, size, 0);
-        readDataByRange(out, 0, writeIdx, tail);
-    }
+    int w = static_cast<int>(writeIdx & mask);
+    int tail = size - w;
+    readDataByRange(out, w, size, 0);
+    readDataByRange(out, 0, w, tail);
 }
 
 // MirrorCircularFIFO — `size` is the logical capacity. The underlying `data`
@@ -139,10 +132,10 @@ MirrorCircularFIFO::MirrorCircularFIFO(int size, const std::string& channelName)
 }
 
 void MirrorCircularFIFO::addSample(float sample) {
-    data[writeIdx] = sample;
-    data[writeIdx + size] = sample;
-    writeIdx = (writeIdx + 1) % size;
-    if (writeIdx == 0) isFull = true;
+    int w = static_cast<int>(writeIdx & mask);
+    data[w] = sample;
+    data[w + size] = sample;
+    writeIdx++;
 }
 
 void MirrorCircularFIFO::addChunk(std::span<const float> chunk) {
@@ -155,34 +148,26 @@ void MirrorCircularFIFO::addChunk(std::span<const float> chunk) {
             ". This could lead to data loss. Split chunk into multiple chunks)");
     }
 
-    if (nSamples == size) {
-        writeDataByRange(chunk, 0, nSamples, 0);
-        writeDataByRange(chunk, 0, nSamples, size);
-        writeIdx = 0;
-        isFull = true;
-        return;
-    }
-
-    int end = writeIdx + nSamples;
+    int w = static_cast<int>(writeIdx & mask);
+    int end = w + nSamples;
     if (end <= size) {
-        writeDataByRange(chunk, 0, nSamples, writeIdx);
-        writeDataByRange(chunk, 0, nSamples, writeIdx + size);
+        writeDataByRange(chunk, 0, nSamples, w);
+        writeDataByRange(chunk, 0, nSamples, w + size);
     } else {
-        int first = size - writeIdx;
-        writeDataByRange(chunk, 0, first, writeIdx);
-        writeDataByRange(chunk, 0, first, writeIdx + size);
+        int first = size - w;
+        writeDataByRange(chunk, 0, first, w);
+        writeDataByRange(chunk, 0, first, w + size);
         writeDataByRange(chunk, first, nSamples, 0);
         writeDataByRange(chunk, first, nSamples, size);
     }
 
-    writeIdx = end % size;
-    if (end >= size) isFull = true;
+    writeIdx += nSamples;
 }
 
 std::span<const float> MirrorCircularFIFO::peekNSamples(int n) const {
-    int filled = getFilledSize();
-    if (n > filled) n = filled;
-    int start = writeIdx + size - n;
+    if (n > size) n = size;
+    int w = static_cast<int>(writeIdx & mask);
+    int start = w + size - n;
     return std::span<const float>(data.data() + start, static_cast<size_t>(n));
 }
 
@@ -193,13 +178,9 @@ void MirrorCircularFIFO::readNSamples(std::span<float> out) {
 }
 
 void MirrorCircularFIFO::readAll(std::span<float> out) {
-    int filled = getFilledSize();
-    if (static_cast<int>(out.size()) < filled) {
+    if (static_cast<int>(out.size()) < size) {
         throw std::invalid_argument("readAll output buffer too small");
     }
-    if (!isFull) {
-        readDataByRange(out, 0, writeIdx, 0);
-    } else {
-        readDataByRange(out, writeIdx, writeIdx + size, 0);
-    }
+    int w = static_cast<int>(writeIdx & mask);
+    readDataByRange(out, w, w + size, 0);
 }
