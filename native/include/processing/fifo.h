@@ -196,3 +196,57 @@ private:
     std::vector<T> channels;
     std::vector<std::string> cachedNames;
 };
+
+// block processor
+
+class SampleCounter {
+public:
+    int count;
+    int resetThresh;
+
+    SampleCounter(int count=0, int resetThresh=-1) : count(count), resetThresh(resetThresh)
+    {
+        if (resetThresh == 0 || resetThresh < -1) {
+            throw std::invalid_argument("resetThesh must be a positive number or -1 (indicates no reset threshold) " + std::to_string(resetThresh));
+        }
+    }
+    
+    void resetCount() {
+        count = 0;
+    }
+
+    bool incrementByN(int n = 1) {
+        int temp = count + n;
+        if (temp >= resetThresh && resetThresh != -1) {
+            count = temp % resetThresh;
+            return true;
+        } 
+
+        count = temp;
+        return false;
+    }
+};
+
+// use window type enum
+//returns view i think
+std::span<float> applyMultiWindow(MultiSignalFIFO<T>* multiFIFO, std::string windowType = "rectangular");
+std::span<float> applyWindow(FIFO* fifo, std::string windowType = "rectangular");
+
+template<typename T>
+class BlockBuffer {
+public:
+    bool canRead;
+    int hopSize;
+    // window size ofr multisignal fifo
+    BlockBuffer() : (buffer(buffer), counter(counter)) {} // default
+    BlockBuffer(MultiSignalFIFO buffer) : (buffer(buffer), counter(counter)) {} // counter with no limit and starting at 0
+    BlockBuffer(MultiSignalFIFO buffer, SampleCounter counter) : (buffer(buffer), counter(counter)) {}
+
+    void addSample(float sample); // adds single sample and increments counter
+    void addChunk(std::span<const float> chunk) // adds chunk adn increments counter by size of chunk
+    
+    std::span<float> getBlock(std::string windowType = "rectangular"); // calls apply window
+protected:
+    MultiSignalFIFO<T> buffer;
+    SampleCounter counter;
+};
