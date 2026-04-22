@@ -828,3 +828,415 @@ button {
   height: 220px;
   margin-top: 8px;
 }
+
+.status-dot.dead {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+}
+
+/* ── Music controls row ─────────────────────────────────────── */
+
+.music-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.music-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(148, 163, 184, 0.55);
+  color: white;
+}
+
+.spotify-connect-btn {
+  border-color: rgba(30, 215, 96, 0.45);
+  color: #1ed760;
+}
+
+.spotify-connect-btn:hover {
+  background: rgba(30, 215, 96, 0.08);
+  border-color: rgba(30, 215, 96, 0.7);
+  color: #1ed760;
+}
+
+.mode-toggle-group {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(120, 160, 255, 0.14);
+  border-radius: 12px;
+  padding: 4px;
+  gap: 2px;
+}
+
+.mode-toggle-btn {
+  padding: 7px 16px;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  color: rgba(225, 235, 255, 0.55);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mode-toggle-btn:hover {
+  color: rgba(225, 235, 255, 0.85);
+}
+
+.mode-toggle-btn.active {
+  background: linear-gradient(180deg, #3b82f6, #2563eb);
+  color: white;
+  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+}
+
+/* ── Spotify player bar ─────────────────────────────────────── */
+
+.spotify-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(120, 160, 255, 0.12);
+}
+
+.spotify-bar-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* progress bar */
+.progress-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-time {
+  font-size: 11px;
+  color: rgba(225, 235, 255, 0.4);
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+}
+
+.progress-time-end {
+  text-align: right;
+}
+
+.progress-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: white;
+  transition: width 0.95s linear;
+}
+
+.spotify-bar-track {
+  font-weight: 700;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: white;
+}
+
+.spotify-bar-artist {
+  font-size: 13px;
+  color: rgba(225, 235, 255, 0.5);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spotify-bar-center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.spotify-play-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0f172a;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+  padding-left: 2px; /* optical center for triangle */
+}
+
+.spotify-play-btn:hover:not(:disabled) {
+  transform: scale(1.07);
+}
+
+.spotify-play-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.spotify-play-btn svg rect,
+.spotify-play-btn svg polygon {
+  fill: #0f172a;
+}
+
+.spotify-bar-right {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.spotify-bar-time {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(225, 235, 255, 0.5);
+  white-space: nowrap;
+}
+
+.spotify-skip-btn {
+  background: none;
+  border: none;
+  color: rgba(225, 235, 255, 0.6);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.spotify-skip-btn:hover:not(:disabled) {
+  color: white;
+  transform: scale(1.12);
+}
+
+.spotify-skip-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.volume-icon {
+  color: rgba(225, 235, 255, 0.5);
+  flex-shrink: 0;
+}
+
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 80px;
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  transition: width 0.2s ease;
+}
+
+.volume-slider:hover {
+  width: 90px;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.volume-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+}
+
+/* ── Feature 1: mood-reactive body ─────────────────────────────────────────── */
+body {
+  transition: background 1.4s ease;
+}
+
+/* ── Feature 2: live waveform strip ────────────────────────────────────────── */
+.mood-waveform {
+  margin-top: 14px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ── Feature 3: album art ───────────────────────────────────────────────────── */
+.spotify-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.spotify-album-art {
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.spotify-bar-track-info {
+  min-width: 0;
+}
+
+/* ── Feature 4: focus streak ────────────────────────────────────────────────── */
+.mini-value.attentive {
+  color: #34d399;
+  text-shadow: 0 0 12px rgba(52, 211, 153, 0.6);
+}
+
+/* ── Feature 5: mood timeline ───────────────────────────────────────────────── */
+.mood-timeline-panel {
+  margin-bottom: 16px;
+}
+
+.mood-timeline-bar {
+  display: flex;
+  height: 20px;
+  border-radius: 10px;
+  overflow: hidden;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.mood-timeline-segment {
+  border-radius: 4px;
+  min-width: 4px;
+  transition: opacity 0.2s ease;
+  cursor: default;
+}
+
+.mood-timeline-segment:hover {
+  opacity: 0.8;
+}
+
+.mood-timeline-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mood-timeline-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgba(225, 235, 255, 0.7);
+  text-transform: capitalize;
+}
+
+.mood-timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Feature 6: band visualizer ─────────────────────────────────────────────── */
+.band-viz {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 80px;
+  margin: 14px 0 10px;
+}
+
+.band-bar-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.band-bar-track {
+  flex: 1;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.band-bar-fill {
+  width: 100%;
+  border-radius: 6px;
+  transition: height 0.6s ease;
+  min-height: 2px;
+}
+
+.band-label {
+  font-size: 11px;
+  color: rgba(225, 235, 255, 0.5);
+  margin-top: 5px;
+  text-align: center;
+  white-space: nowrap;
+}
