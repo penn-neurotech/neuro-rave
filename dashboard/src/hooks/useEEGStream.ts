@@ -9,11 +9,13 @@ const DISPLAY_SIZE    = DISPLAY_SECONDS * SAMPLE_RATE
 
 
 export interface EEGFeatures {
-  energy:            number
-  focus:             number
-  mood:              string
-  theta_beta_ratio:  number
-  alpha_suppression: number
+  energy:               number
+  focus:                number
+  mood:                 string
+  theta_beta_ratio:     number
+  alpha_suppression:    number
+  sustained_streak_sec: number
+  is_attentive:         boolean
 }
 
 export interface UseEEGStreamResult {
@@ -54,11 +56,13 @@ export function useEEGStream(url: string): UseEEGStreamResult {
 
   const onFeaturesPacket = useCallback((packet: FeaturesPacket): void => {
     setFeatures({
-      energy:            packet.energy,
-      focus:             packet.focus,
-      mood:              packet.mood,
-      theta_beta_ratio:  packet.theta_beta_ratio,
-      alpha_suppression: packet.alpha_suppression,
+      energy:               packet.energy,
+      focus:                packet.focus,
+      mood:                 packet.mood,
+      theta_beta_ratio:     packet.theta_beta_ratio,
+      alpha_suppression:    packet.alpha_suppression,
+      sustained_streak_sec: packet.sustained_streak_sec ?? 0,
+      is_attentive:         packet.is_attentive ?? false,
     })
   }, [])
 

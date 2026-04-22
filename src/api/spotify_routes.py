@@ -383,6 +383,10 @@ class MoodMappingOut(BaseModel):
     bootstrap_playback_error: Optional[str] = None
 
 
+class VolumeIn(BaseModel):
+    volume_percent: int = Field(..., ge=0, le=100)
+
+
 class DashboardPlaybackModeIn(BaseModel):
     mode: str = Field(..., min_length=2)
 
@@ -565,6 +569,52 @@ def post_dashboard_resume_http(user: SpotifyUserContext = Depends(get_spotify_us
         raise HTTPException(status_code=resp.status_code, detail=f"Spotify resume failed: {detail}")
     write_dashboard_playback_paused(False)
     return DashboardPlaybackPauseOut(paused=False)
+
+
+@router.post("/dashboard/next", response_model=DashboardPlaybackPauseOut)
+def post_dashboard_next_http(user: SpotifyUserContext = Depends(get_spotify_user_context)) -> DashboardPlaybackPauseOut:
+    access_token = refresh_access_token(user.client_id, user.client_secret, user.refresh_token)
+    resp = requests.post(
+        f"{API_BASE_URL}/me/player/next",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if resp.status_code not in (200, 202, 204):
+        detail = _spotify_error_summary(resp)
+        raise HTTPException(status_code=resp.status_code, detail=f"Spotify skip next failed: {detail}")
+    return DashboardPlaybackPauseOut(paused=read_dashboard_playback_paused())
+
+
+@router.post("/dashboard/previous", response_model=DashboardPlaybackPauseOut)
+def post_dashboard_previous_http(user: SpotifyUserContext = Depends(get_spotify_user_context)) -> DashboardPlaybackPauseOut:
+    access_token = refresh_access_token(user.client_id, user.client_secret, user.refresh_token)
+    resp = requests.post(
+        f"{API_BASE_URL}/me/player/previous",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if resp.status_code not in (200, 202, 204):
+        detail = _spotify_error_summary(resp)
+        raise HTTPException(status_code=resp.status_code, detail=f"Spotify skip previous failed: {detail}")
+    return DashboardPlaybackPauseOut(paused=read_dashboard_playback_paused())
+
+
+@router.post("/dashboard/volume")
+def post_dashboard_volume_http(
+    body: VolumeIn,
+    user: SpotifyUserContext = Depends(get_spotify_user_context),
+) -> dict:
+    access_token = refresh_access_token(user.client_id, user.client_secret, user.refresh_token)
+    resp = requests.put(
+        f"{API_BASE_URL}/me/player/volume",
+        params={"volume_percent": body.volume_percent},
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if resp.status_code not in (200, 202, 204):
+        detail = _spotify_error_summary(resp)
+        raise HTTPException(status_code=resp.status_code, detail=f"Spotify volume failed: {detail}")
+    return {"volume_percent": body.volume_percent}
 
 
 @router.get("/setup/status", response_model=SetupStatusOut)
