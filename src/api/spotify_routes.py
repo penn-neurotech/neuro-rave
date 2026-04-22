@@ -582,7 +582,9 @@ def post_dashboard_next_http(user: SpotifyUserContext = Depends(get_spotify_user
     if resp.status_code not in (200, 202, 204):
         detail = _spotify_error_summary(resp)
         raise HTTPException(status_code=resp.status_code, detail=f"Spotify skip next failed: {detail}")
-    return DashboardPlaybackPauseOut(paused=read_dashboard_playback_paused())
+    # Manual "next" acts as a deliberate user override; unlock mood auto-switching.
+    write_dashboard_playback_paused(False)
+    return DashboardPlaybackPauseOut(paused=False)
 
 
 @router.post("/dashboard/previous", response_model=DashboardPlaybackPauseOut)
@@ -596,7 +598,9 @@ def post_dashboard_previous_http(user: SpotifyUserContext = Depends(get_spotify_
     if resp.status_code not in (200, 202, 204):
         detail = _spotify_error_summary(resp)
         raise HTTPException(status_code=resp.status_code, detail=f"Spotify skip previous failed: {detail}")
-    return DashboardPlaybackPauseOut(paused=read_dashboard_playback_paused())
+    # Manual "previous" also counts as a user override; unlock mood auto-switching.
+    write_dashboard_playback_paused(False)
+    return DashboardPlaybackPauseOut(paused=False)
 
 
 @router.post("/dashboard/volume")

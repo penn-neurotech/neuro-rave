@@ -21,8 +21,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Set
+from typing import TYPE_CHECKING, AsyncGenerator, Set
 
 import numpy as np
 import uvicorn
@@ -34,20 +35,29 @@ from scipy.signal import butter, lfilter, iirnotch
 from src.api.spotify_routes import router as spotify_router
 import src.constants as const
 from src.music_gen.spotify_controller import MoodStabilizer, NeuroFeatures, propose_mood
-from src.streaming.lslbridge import LSLConsumer
 from src.streaming.packets import RawPacket, FeaturesPacket
 from src.processing.fifo import MirrorCircleFIFO
+
+if TYPE_CHECKING:
+    from src.streaming.lslbridge import LSLConsumer
 
 logger = logging.getLogger(__name__)
 
 
 class EEGWebSocketServer:
-    def __init__(self, host: str = const.WS_HOST, port: int = const.WS_PORT) -> None:
+    def __init__(
+        self,
+        host: str = const.WS_HOST,
+        port: int = const.WS_PORT,
+        use_internal_lsl_source: bool = True,
+    ) -> None:
         self.host = host
         self.port = port
+        self.use_internal_lsl_source = bool(use_internal_lsl_source)
 
         self._clients:  Set[WebSocket]     = set()
         self._consumer: LSLConsumer | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._features_buf = MirrorCircleFIFO(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
         self._features_dirty = False
         self._feat_alpha_hist: list[np.ndarray] = []
@@ -81,13 +91,17 @@ class EEGWebSocketServer:
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncGenerator[None, None]:
         """Start all broadcast loops on app startup; cancel them on shutdown."""
-        tasks = [
-            asyncio.create_task(self._raw_loop()),
-            asyncio.create_task(self._features_loop()),
-        ]
+        self._loop = asyncio.get_running_loop()
+        tasks = []
+        if self.use_internal_lsl_source:
+            tasks = [
+                asyncio.create_task(self._raw_loop()),
+                asyncio.create_task(self._features_loop()),
+            ]
         yield
         for task in tasks:
             task.cancel()
+        self._loop = None
 
     # ── Client management ──────────────────────────────────────────────────────
 
@@ -120,6 +134,7 @@ class EEGWebSocketServer:
     async def _raw_loop(self) -> None:
         """Pull raw EEG chunks from LSL and broadcast once per second."""
         loop = asyncio.get_event_loop()
+        from src.streaming.lslbridge import LSLConsumer
 
         logger.info("Resolving LSL EEG stream…")
         self._consumer = await loop.run_in_executor(None, LSLConsumer)
@@ -274,3 +289,49 @@ class EEGWebSocketServer:
         thread = threading.Thread(target=_run, daemon=True, name="ws-server")
         thread.start()
         logger.info("WebSocket server started on ws://%s:%d/ws", self.host, self.port)
+
+    def publish_raw(self, samples: np.ndarray, timestamp: float | None = None) -> None:
+        """Broadcast one raw packet from an external producer (e.g., main loop)."""
+        loop = self._loop
+        if loop is None or not self._clients:
+            return
+        arr = np.asarray(samples, dtype=np.float32)
+        if arr.ndim != 2:
+            return
+        packet = RawPacket(
+            timestamp=float(timestamp if timestamp is not None else time.time()),
+            channels=arr.T.tolist(),
+        )
+        asyncio.run_coroutine_threadsafe(self._broadcast(packet.to_json()), loop)
+
+    def publish_features(
+        self,
+        *,
+        energy: float,
+        focus: float,
+        mood: str,
+        alpha_suppression: float,
+        sustained_streak_sec: float,
+        is_attentive: bool,
+        sustained_attention_index: float,
+        energy_index: float | None,
+        theta_beta_ratio: float = 0.0,
+        timestamp: float | None = None,
+    ) -> None:
+        """Broadcast one feature packet from an external producer (e.g., main loop)."""
+        loop = self._loop
+        if loop is None or not self._clients:
+            return
+        packet = FeaturesPacket(
+            timestamp=float(timestamp if timestamp is not None else time.time()),
+            energy=float(energy),
+            focus=float(focus),
+            mood=str(mood),
+            theta_beta_ratio=float(theta_beta_ratio),
+            alpha_suppression=float(alpha_suppression),
+            sustained_attention_index=float(sustained_attention_index),
+            energy_index=float(energy_index) if energy_index is not None else 0.0,
+            is_attentive=bool(is_attentive),
+            sustained_streak_sec=float(sustained_streak_sec),
+        )
+        asyncio.run_coroutine_threadsafe(self._broadcast(packet.to_json()), loop)
