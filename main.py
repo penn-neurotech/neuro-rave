@@ -274,11 +274,15 @@ if __name__ == "__main__":
     else:
         spotify_cli_mode = None
 
-    # ── WebSocket server (optional: requires uvicorn, fastapi; pulls LSL for /ws broadcast) ──
+    # ── WebSocket server (dashboard feed + Spotify REST) ───────────────────────
+    ws_server = None
     try:
         from src.streaming.ws_server import EEGWebSocketServer
 
-        EEGWebSocketServer().start()
+        # The main loop already has the live/sim EEG source, so use it as the
+        # single producer for dashboard packets in both real and simulated modes.
+        ws_server = EEGWebSocketServer(use_internal_lsl_source=False)
+        ws_server.start()
     except ImportError as exc:
         logger.warning(
             "EEG WebSocket server not started (install deps: pip install -r requirements.txt): %s",
@@ -447,7 +451,10 @@ if __name__ == "__main__":
                 time.sleep(0.01)
                 continue
 
-        processor.buffer.add_chunk(np.asarray(samples, dtype=np.float32))
+        samples_arr = np.asarray(samples, dtype=np.float32)
+        processor.buffer.add_chunk(samples_arr)
+        if ws_server is not None:
+            ws_server.publish_raw(samples_arr)
         _hb_fill_iters += 1
 
         if not processor.buffer.full:
@@ -488,6 +495,19 @@ if __name__ == "__main__":
             mood,
             proposed,
         )
+        if ws_server is not None:
+            ws_server.publish_features(
+                energy=spotify_features.energy,
+                focus=spotify_features.focus,
+                mood=mood,
+                alpha_suppression=float(eeg_features.get("alpha_sup_mean", 0.0) or 0.0),
+                sustained_streak_sec=float(eeg_features.get("sustained_streak_sec", 0.0) or 0.0),
+                is_attentive=bool(eeg_features.get("is_attentive", False)),
+                sustained_attention_index=float(
+                    eeg_features.get("sustained_attention_index", 0.0) or 0.0
+                ),
+                energy_index=eeg_features.get("energy_index"),
+            )
 
         _rebuild_spotify_if_needed()
         sp_ctrl = _spotify_rt["controller"]

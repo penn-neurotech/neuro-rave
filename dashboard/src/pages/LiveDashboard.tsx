@@ -37,14 +37,6 @@ function playlistLabel(mood: string, labels: Record<string, string>): string {
 }
 
 
-function formatDurationMs(ms?: number | null): string {
-  if (!ms || ms < 0) return "0:00";
-  const totalSec = Math.floor(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 function formatStreak(sec: number): string {
   if (sec < 60) return `${Math.floor(sec)}s`;
   const m = Math.floor(sec / 60);
@@ -323,7 +315,6 @@ export default function LiveDashboard() {
   const [playbackPaused, setPlaybackPaused] = useState(false);
   const [isSpotifyPlaying, setIsSpotifyPlaying] = useState(false);
   const [nowPlaying, setNowPlaying] = useState<NowPlayingTrack | null>(null);
-  const [nowPlayingProgressMs, setNowPlayingProgressMs] = useState<number | null>(null);
   const [nowPlayingDurationMs, setNowPlayingDurationMs] = useState<number | null>(null);
   const [displayProgressMs, setDisplayProgressMs] = useState<number | null>(null);
   const [playerActionBusy, setPlayerActionBusy] = useState(false);
@@ -411,7 +402,6 @@ export default function LiveDashboard() {
     setNowPlaying(data.track ?? null);
     const prog = typeof data.progress_ms === "number" ? data.progress_ms : null;
     const dur = typeof data.track?.duration_ms === "number" ? data.track.duration_ms : null;
-    setNowPlayingProgressMs(prog);
     setNowPlayingDurationMs(dur);
     if (prog !== null) {
       progressRef.current.ms = prog;
@@ -502,7 +492,20 @@ export default function LiveDashboard() {
   const onSkipNext = async () => {
     setPlayerActionBusy(true);
     try {
-      await fetch(`${api}/spotify/dashboard/next`, { method: "POST" });
+      const response = await fetch(`${api}/spotify/dashboard/next`, { method: "POST" });
+      if (response.ok) {
+        const data = (await response.json().catch(() => null)) as { paused?: boolean } | null;
+        const nowUnlocked = data?.paused === false;
+        if (nowUnlocked) {
+          setPlaybackPaused(false);
+          setLogs((prev) =>
+            [{
+              time: new Date().toLocaleTimeString(),
+              text: "Next track pressed — playback unlocked",
+            }, ...prev].slice(0, 8),
+          );
+        }
+      }
     } finally {
       setPlayerActionBusy(false);
       setTimeout(() => fetchPlayerState().catch(() => {}), 600);
@@ -512,7 +515,20 @@ export default function LiveDashboard() {
   const onSkipPrevious = async () => {
     setPlayerActionBusy(true);
     try {
-      await fetch(`${api}/spotify/dashboard/previous`, { method: "POST" });
+      const response = await fetch(`${api}/spotify/dashboard/previous`, { method: "POST" });
+      if (response.ok) {
+        const data = (await response.json().catch(() => null)) as { paused?: boolean } | null;
+        const nowUnlocked = data?.paused === false;
+        if (nowUnlocked) {
+          setPlaybackPaused(false);
+          setLogs((prev) =>
+            [{
+              time: new Date().toLocaleTimeString(),
+              text: "Previous track pressed — playback unlocked",
+            }, ...prev].slice(0, 8),
+          );
+        }
+      }
     } finally {
       setPlayerActionBusy(false);
       setTimeout(() => fetchPlayerState().catch(() => {}), 600);
@@ -830,13 +846,11 @@ export default function LiveDashboard() {
                 }}
               />
             </div>
-            <span className="spotify-bar-time">{formatDurationMs(nowPlayingProgressMs)}</span>
           </div>
           </div>{/* end spotify-bar-main */}
 
           {/* Progress bar row */}
           <div className="progress-bar-row">
-            <span className="progress-time">{formatDurationMs(displayProgressMs)}</span>
             <div className="progress-track">
               <div
                 className="progress-fill"
@@ -848,9 +862,6 @@ export default function LiveDashboard() {
                 }}
               />
             </div>
-            <span className="progress-time progress-time-end">
-              {formatDurationMs(nowPlayingDurationMs)}
-            </span>
           </div>
         </div>{/* end spotify-bar */}
       </section>
