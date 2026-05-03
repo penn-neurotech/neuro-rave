@@ -1,33 +1,39 @@
 # EEG-Powered Music Dashboard
 
 ## Overview
-This project is a React frontend dashboard for an EEG-powered music generation system.
 
-It displays:
-- live EEG-derived metrics
-- mood classification
-- music mode (Spotify or Suno)
-- playlist or generation status
-- recent activity logs
+React frontend for the NEURO-RAVE Python backend (`main.py` + WebSocket on **`WS_PORT`**, default **8733**). The server sends **`raw`** and **`features`** JSON packets (see `src/streaming/packets.py` and [docs/dev-reference.md](../docs/dev-reference.md)).
 
-## My Role
-I built the frontend dashboard for metrics and music visualization using React.
+## What it shows
+
+- Live EEG-derived **energy** and **focus** (values after backend routing; when **`NEURO_APPLY_STABILIZER_SMOOTH`** is true in `config/constants.json`, these reflect `MoodStabilizer` smoothing)
+- **Mood**: `calm`, `deep_focus`, `focus`, `hype` (from backend `propose_mood`)
+- Music mode (Spotify vs Suno), playlist / pool status, activity logs
+
+Backend routing: **`NEURO_FEATURE_SOURCE`** (`attention` vs `band_pipeline`) and **`NEURO_APPLY_STABILIZER_SMOOTH`** — see root **README.md** § Configuration.
 
 ## Features
+
 - Live energy and focus bars
-- Mood classification: calm / focus / hype
-- Spotify mode panel
-- Suno mode panel
+- Mood display (including **deep_focus** when the backend proposes it)
+- Spotify and Suno panels
 - Metric history charts
 - Activity log
-- Mock live-updating data for demo purposes
+- Optional mock data for demos (if used in dev)
 
-## Tech Stack
+## Tech stack
+
 - React
 - Vite
 - CSS
 
-## How to Run
+## How to run
+
+From `dashboard/`:
+
 ```bash
 npm install
 npm run dev
+```
+
+Start the Python app and WebSocket server from the repo root (**README.md**) so the dashboard receives live packets.

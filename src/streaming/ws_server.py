@@ -31,10 +31,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 # --- BEGIN agent-added: CORS + Spotify REST routes on same app as /ws ---
 from fastapi.middleware.cors import CORSMiddleware
 
-from scipy.signal import butter, lfilter, iirnotch
 from src.api.spotify_routes import router as spotify_router
 import src.constants as const
 from src.music_gen.spotify_controller import MoodStabilizer, NeuroFeatures, propose_mood
+from src.processing.dashboard_features import DashboardFeatureState
+from src.processing.mood_prepare import stabilizer_outputs_for_mood
+from src.processing.neuro_raw_inputs import neuro_raw_inputs_for_stabilizer
+from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
 from src.streaming.packets import RawPacket, FeaturesPacket
 from src.processing.fifo import MirrorCircleFIFO
 
@@ -60,18 +63,18 @@ class EEGWebSocketServer:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._features_buf = MirrorCircleFIFO(size=const.WINDOW_SIZE, n_channels=const.N_CHANNELS)
         self._features_dirty = False
-        self._feat_alpha_hist: list[np.ndarray] = []
+        self._dashboard_features = DashboardFeatureState()
         self._mood_stabilizer = MoodStabilizer()
-
-        # Attention state (mirrors main.EEGProcessor). _features_loop runs at
-        # ~1 Hz, so window_seconds==1.0 for these state updates.
-        self._feat_window_seconds: float = 1.0
-        self._feat_current_streak_sec: float = 0.0
-        self._feat_variability_window_size: int = max(
-            1,
-            round(float(const.ATTENTION_VARIABILITY_SEC) / self._feat_window_seconds),
+        self._band_pipeline: SpotifyFeaturePipeline | None = (
+            SpotifyFeaturePipeline()
+            if const.NEURO_FEATURE_SOURCE == "band_pipeline"
+            else None
         )
-        self._feat_alpha_sup_history: list[float] = []
+        logger.info(
+            "NEURO_FEATURE_SOURCE=%s | NEURO_APPLY_STABILIZER_SMOOTH=%s",
+            const.NEURO_FEATURE_SOURCE,
+            const.NEURO_APPLY_STABILIZER_SMOOTH,
+        )
 
         self.app = FastAPI(lifespan=self._lifespan)
         # --- BEGIN agent-added: CORS + mount /spotify/* routers ---
@@ -173,91 +176,35 @@ class EEGWebSocketServer:
     # ── Features broadcast ────────────────────────────────────────────────────
 
     def _compute_features_packet(self, data: np.ndarray) -> FeaturesPacket:
-        """Same band features + alpha-suppression baseline as ``main.EEGProcessor``; same Spotify mapping as main."""
-        fs = const.SAMPLE_RATE
+        """Band features + attention indices; same module as ``main.EEGProcessor``."""
+        wf = self._dashboard_features.process_window(np.asarray(data, dtype=np.float32))
 
-        def _bandpass(d: np.ndarray, lo: float, hi: float) -> np.ndarray:
-            b, a = butter(4, [lo / (fs / 2), hi / (fs / 2)], btype="band")
-            return lfilter(b, a, d, axis=0)
-
-        b_notch, a_notch = iirnotch(60 / (fs / 2), 30)
-        d = lfilter(b_notch, a_notch, data, axis=0)
-        b_bp, a_bp = butter(4, [1 / (fs / 2), 100 / (fs / 2)], btype="band")
-        d = lfilter(b_bp, a_bp, d, axis=0)
-
-        theta = _bandpass(d, 4, 8)
-        alpha = _bandpass(d, 8, 13)
-        beta = _bandpass(d, 13, 30)
-        gamma = _bandpass(d, 30, 100)
-
-        self._feat_alpha_hist.append(alpha.copy())
-
-        def _bandpower(x: np.ndarray) -> np.ndarray:
-            return np.mean(x ** 2, axis=0)
-
-        theta_power = _bandpower(theta)
-        alpha_power = _bandpower(alpha)
-        beta_power = _bandpower(beta)
-        gamma_power = _bandpower(gamma)
-        theta_beta = np.where(beta_power > 0, theta_power / beta_power, 0.0)
-
-        alpha_sup = np.zeros(const.N_CHANNELS)
-        if len(self._feat_alpha_hist) > 5:
-            baseline_data = np.concatenate(self._feat_alpha_hist[:5], axis=0)
-            baseline = np.mean(baseline_data ** 2, axis=0)
-            alpha_sup = np.where(
-                baseline > 0,
-                (baseline - alpha_power) / baseline * 100,
-                0.0,
-            )
-
-        # Attention indices: streak / rolling variability of clipped 0-1 alpha sup.
-        alpha_sup_mean_norm = float(np.clip(np.mean(alpha_sup) / 100.0, 0.0, 1.0))
-        if alpha_sup_mean_norm > float(const.ATTENTION_ALPHA_SUP_THRESHOLD):
-            self._feat_current_streak_sec += self._feat_window_seconds
-        else:
-            self._feat_current_streak_sec = 0.0
-        sustained_streak_sec = self._feat_current_streak_sec
-        sustained_attention_index = min(
-            sustained_streak_sec / float(const.ATTENTION_SUSTAINED_SEC), 1.0
+        feat = wf.to_spotify_feature_dict(
+            energy_index=wf.energy_index,
+            sustained_attention_index=wf.sustained_attention_index,
         )
-        is_attentive = sustained_streak_sec >= float(const.ATTENTION_SUSTAINED_SEC)
+        raw_energy, raw_focus = neuro_raw_inputs_for_stabilizer(
+            feat,
+            band_pipeline=self._band_pipeline,
+        )
 
-        self._feat_alpha_sup_history.append(alpha_sup_mean_norm)
-        if len(self._feat_alpha_sup_history) > self._feat_variability_window_size:
-            self._feat_alpha_sup_history.pop(0)
-        if len(self._feat_alpha_sup_history) < self._feat_variability_window_size:
-            rolling_variability: float | None = None
-            energy_index: float | None = None
-        else:
-            rolling_variability = float(np.std(self._feat_alpha_sup_history))
-            energy_index = min(
-                rolling_variability / float(const.ATTENTION_VARIABILITY_MAX), 1.0
-            )
-
-        # Match the current `main.py` mood logic:
-        # mood is driven by (energy_index, sustained_attention_index) smoothed via
-        # MoodStabilizer and then majority-voted for stability.
-        raw_energy = float(energy_index) if energy_index is not None else 0.5
-        raw_focus = float(sustained_attention_index)
-
-        se, sf, d_e = self._mood_stabilizer.smooth(raw_energy, raw_focus)
+        se, sf, d_e = stabilizer_outputs_for_mood(
+            self._mood_stabilizer, raw_energy, raw_focus
+        )
         proposed = propose_mood(NeuroFeatures(energy=se, focus=sf, d_energy=d_e))
         mood = self._mood_stabilizer.majority_mood(proposed)
 
-        tb_mean = float(np.mean(theta_beta))
-        alpha_sup_mean = float(np.mean(alpha_sup))
         return FeaturesPacket(
             timestamp=0.0,
             energy=se,
             focus=sf,
             mood=mood,
-            theta_beta_ratio=tb_mean,
-            alpha_suppression=alpha_sup_mean,
+            theta_beta_ratio=wf.theta_beta_mean,
+            alpha_suppression=wf.alpha_sup_mean,
             sustained_attention_index=raw_focus,
-            energy_index=float(energy_index) if energy_index is not None else 0.0,
-            is_attentive=bool(is_attentive),
-            sustained_streak_sec=float(sustained_streak_sec),
+            energy_index=float(wf.energy_index) if wf.energy_index is not None else 0.0,
+            is_attentive=bool(wf.is_attentive),
+            sustained_streak_sec=float(wf.sustained_streak_sec),
         )
 
     async def _features_loop(self) -> None:

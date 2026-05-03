@@ -13,6 +13,7 @@ from collections import deque
 import numpy as np
 
 import src.constants as const
+from src.calibration.session_theta_beta import ThetaBetaSessionCalibrator
 from src.music_gen.spotify_controller import NeuroFeatures
 from src.processing.focus_map import focus_from_theta_beta_mean
 
@@ -39,11 +40,14 @@ def _hist_maxlen() -> int:
 class SpotifyFeaturePipeline:
     """Stateful pipeline (per-stream history). Instantiate one per EEG source."""
 
-    def __init__(self) -> None:
+    def __init__(self, theta_beta_calibrator: ThetaBetaSessionCalibrator | None = None) -> None:
         n = _hist_maxlen()
         self._energy_history: deque[float] = deque(maxlen=n)
         self._gamma_history: deque[float] = deque(maxlen=n)
         self._energy_slow_state: float | None = None
+        self._tb_cal: ThetaBetaSessionCalibrator | None = theta_beta_calibrator
+        if self._tb_cal is None and bool(getattr(const, "SESSION_THETA_BETA_CALIBRATION", False)):
+            self._tb_cal = ThetaBetaSessionCalibrator()
 
     def process(self, eeg_features: dict) -> NeuroFeatures:
         alpha_sup_mean = float(np.mean(eeg_features["alpha_suppression"]))
@@ -101,7 +105,15 @@ class SpotifyFeaturePipeline:
         )
 
         tb_mean = float(np.mean(eeg_features["theta_beta_ratio"]))
-        focus = focus_from_theta_beta_mean(tb_mean)
+        if self._tb_cal is not None:
+            self._tb_cal.observe(tb_mean)
+            b = self._tb_cal.bounds()
+            if b is not None:
+                focus = focus_from_theta_beta_mean(tb_mean, low=b[0], high=b[1])
+            else:
+                focus = focus_from_theta_beta_mean(tb_mean)
+        else:
+            focus = focus_from_theta_beta_mean(tb_mean)
 
         # Blend alpha-suppression attention indices from the current mood model
         # when they're available. Warm-up windows return None -> skip the blend.

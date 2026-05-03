@@ -69,7 +69,7 @@ class EEGProcessor:
         data = self.buffer.data  # (window_size, n_channels)
 
         # preprocessing
-        data = notch(data, 60, const.SAMPLE_RATE)
+        data = notch(data, float(const.LINE_FREQ), const.SAMPLE_RATE)
         data = bandpass(data, 1, 100, const.SAMPLE_RATE)
 
         # band-filtered signals - each is (window_size, n_channels)

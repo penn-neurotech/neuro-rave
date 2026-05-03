@@ -25,18 +25,19 @@ BioSemi → ActiView (TCP) → LSL Bridge → LSL Stream → EEG Processor
 neuro-rave/
 ├── config/
 │   ├── constants.json          # Single source of truth for all config
-│   └── spotify_mood_mapping.json
+│   └── spotify_mood_mapping.json   # local only (gitignored); created by dashboard Setup
 ├── src/
 │   ├── api/                    # FastAPI REST endpoints (/spotify/*)
+│   ├── calibration/            # BDF replay, metrics, optional threshold search
 │   ├── music_gen/              # Spotify + Suno controllers
-│   ├── processing/             # DSP, feature extraction, circular buffer
+│   ├── processing/             # DSP, dashboard window features, mood routing
 │   └── streaming/              # Python LSLBridge + WebSocket server
 ├── native/                     # C and C++ implementations
 │   ├── CMakeLists.txt
 │   ├── include/                # Headers (config.h, lsl_bridge*.h, ws_server*.h)
 │   └── src/                    # C++ (.cpp) and C (.c) source files
 ├── dashboard/                  # React + Vite frontend
-├── scripts/                    # Demo and utility scripts
+├── scripts/                    # Utilities (e.g. calibration_run.py, setup_conda_env.sh)
 ├── Makefile                    # All run / build targets
 ├── Dockerfile
 ├── docker-compose.yml
@@ -176,11 +177,46 @@ Key fields:
 | `WS_PORT` | `8733` | WebSocket server port |
 | `N_CHANNELS` | `8` | EEG channel count |
 | `SAMPLE_RATE` | `512` | Hz |
-| `FOCUS_THETA_BETA_LOW` | `0.10` | Mean θ/β at or below → focus score 1.0 (linear map) |
+| `LINE_FREQ` | `60` | Notch frequency (Hz); use `50` where mains are 50 Hz |
+| `NEURO_FEATURE_SOURCE` | `"attention"` | How raw **energy**/**focus** are formed before mood smoothing — see below |
+| `NEURO_APPLY_STABILIZER_SMOOTH` | `true` | Apply `MoodStabilizer` EMA before `propose_mood`; `false` passes routed inputs with step `d_energy` only |
+| `SESSION_THETA_BETA_CALIBRATION` | `false` | When `true`, `SpotifyFeaturePipeline` learns θ/β bounds over the first N windows — **only active** when `NEURO_FEATURE_SOURCE` is **`band_pipeline`** (`main.py` does not load that pipeline otherwise) |
+| `FOCUS_THETA_BETA_LOW` | `0.10` | Mean θ/β at or below → focus score 1.0 (linear map); tune on real data |
 | `FOCUS_THETA_BETA_HIGH` | `0.42` | Mean θ/β at or above → focus score 0.0 |
 | `SIM_PHASE_SECONDS` | `30` | Simulated EEG only: seconds per **calm → focus → hype** segment |
 
+**Environment overrides:** **`main.py`** loads **`.env`** before **`constants.json`**. **`NEURO_FEATURE_SOURCE`**: environment string wins when present; invalid values → **`attention`**. **`NEURO_APPLY_STABILIZER_SMOOTH`**: JSON default applies unless **`NEURO_APPLY_STABILIZER_SMOOTH`** is explicitly set in the environment (`_env_truthy` in **`src/constants.py`** — `1`/`true`/`yes` only). **`SIMULATE`** / **`EEG_SIM`**: unchanged legacy behavior.
+
 To run in simulation mode, set `"SIMULATE": true` in `constants.json`.
+
+### EEG features & mood (matches `main.py` / WebSocket)
+
+Shared **1 s window** processing lives in `src/processing/dashboard_features.py` (`DashboardFeatureState`): line notch at **`LINE_FREQ`**, broad bandpass, θ/α/β/γ bands, alpha suppression vs the **first five** alpha windows, sustained-attention streak, rolling variability → **`energy_index`** and **`sustained_attention_index`**.
+
+**Routing (`NEURO_FEATURE_SOURCE`):**
+
+- **`attention`** (default) — Feed **`energy_index`** (or `0.5` during warm-up) and **`sustained_attention_index`** into the mood stabilizer path.
+- **`band_pipeline`** — Build **`SpotifyFeaturePipeline.process(...)`** from the same window (α suppression %, θ/β, γ, optional blends with attention indices per `ENERGY_ATTENTION_BLEND` / `FOCUS_ATTENTION_BLEND`), then use its **`energy`**/**`focus`** as the routed inputs.
+
+**Smoothing (`NEURO_APPLY_STABILIZER_SMOOTH`):**
+
+- **`true`** (default) — `MoodStabilizer.smooth` → **`propose_mood`** → **`majority_mood`** → Spotify / dashboard (same as before this option existed).
+- **`false`** — Skip stabilizer EMA; **`direct_for_mood`** supplies step **`d_energy`** from successive routed energies.
+
+Mood buckets (`calm`, `deep_focus`, `focus`, `hype`) are unchanged — see `propose_mood` in `src/music_gen/spotify_controller.py`.
+
+### Offline calibration & BDF replay
+
+Replay BioSemi **`.bdf`** files through the same windowing + mood logic (for tuning / reports):
+
+```bash
+python scripts/calibration_run.py trace "path/to/session.bdf" --out artifacts/calibration/windows.csv
+python scripts/calibration_run.py report artifacts/calibration/windows.csv --json-out artifacts/calibration/report.json
+python scripts/calibration_run.py search "path/to/session.bdf"         # grid over attention thresholds (heuristic score)
+python scripts/calibration_run.py write-calibrated "path/to/session.bdf"  # writes config/constants.calibrated.json
+```
+
+Specification JSON: `src/calibration/spec.py` (`write_calibration_spec_json`). Tests live under `tests/`.
 
 ---
 
@@ -323,11 +359,15 @@ SPOTIFY_PLAYBACK_MODE=pool
 | `python main.py --spotify-pool` | CSV track pool → nearest feature match (needs pool file) |
 | `python main.py` | Uses **`SPOTIFY_PLAYBACK_MODE`** from `.env` / Compose (default **context**) |
 
-**Mood pipeline**
+**Live mood pipeline (`main.py`)**
 
-- **Features:** `energy` blends alpha-suppression min–max (longer history via **`SPOTIFY_ENERGY_HISTORY_MAX`**) with **gamma** arousal (**`SPOTIFY_GAMMA_AROUSAL_WEIGHT`**) and a slow EMA (**`SPOTIFY_ENERGY_SLOW_ALPHA`**, **`SPOTIFY_ENERGY_FAST_WEIGHT`**).
-- **Stabilization:** EMA on energy/focus (**`SPOTIFY_MOOD_EMA_ALPHA`**), then majority vote over the last **`SPOTIFY_MOOD_VOTE_WINDOWS`** proposed moods; set **`SPOTIFY_MOOD_VOTE_OFF=1`** to disable voting.
+- **Window features:** `DashboardFeatureState` (shared with the dashboard WebSocket server when features are computed there) — see **EEG features & mood** under Configuration above.
+- **Routed inputs:** `NEURO_FEATURE_SOURCE` selects **attention indices** vs **`SpotifyFeaturePipeline`** band mapping (`src/processing/spotify_feature_pipeline.py`).
+- **Optional stabilizer pass:** `NEURO_APPLY_STABILIZER_SMOOTH` (`src/processing/mood_prepare.py`).
+- **Stabilization:** EMA on routed energy/focus when smooth is on (**`SPOTIFY_MOOD_EMA_ALPHA`**), then majority vote over the last **`SPOTIFY_MOOD_VOTE_WINDOWS`** proposed moods; set **`SPOTIFY_MOOD_VOTE_OFF=1`** to disable voting.
 - **Buckets:** `calm`, `deep_focus`, `focus`, `hype` (see `propose_mood` in `spotify_controller.py`). **`deep_focus`** uses the **focus** playlist URIs unless you add a `deep_focus` key to `config/spotify_mood_mapping.json`.
+
+**Track pool mode** (`NeuroFeatures` → `neuro_features_to_pool_targets`) uses the same smoothed **`energy`**/**`focus`** passed to Spotify controllers — not a separate feature stack.
 
 **4. Simulated EEG + Spotify (`main.py`)**
 
@@ -338,7 +378,8 @@ docker compose run --rm -e SIMULATE=1 neuro-rave python main.py
 ```
 
 What to expect:
-- Logs show `SIM phase -> calm|focus|hype`, then `Theta/Beta=... | mood=...`.
+
+- Logs include **`SIM phase -> calm|focus|hype`** and **`e_idx=… | e_in=… f_in=… | … mood=…`** (energy/focus stream after routing + stabilizer settings).
 - Keep a Spotify playback device active.
 
 **5. Real EEG in Docker**

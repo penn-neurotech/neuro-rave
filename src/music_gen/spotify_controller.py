@@ -128,6 +128,7 @@ class MoodStabilizer:
             "true",
             "yes",
         )
+        self._direct_prev_e: Optional[float] = None
 
     def smooth(self, energy: float, focus: float) -> tuple[float, float, float]:
         """Return ``(ema_energy, ema_focus, d_energy)``."""
@@ -142,6 +143,17 @@ class MoodStabilizer:
         d_e = 0.0 if self._prev_ema_e is None else (self._ema_e - self._prev_ema_e)
         self._prev_ema_e = self._ema_e
         return self._ema_e, self._ema_f, d_e
+
+    def direct_for_mood(self, energy: float, focus: float) -> tuple[float, float, float]:
+        """No EMA — clamped inputs and ``d_energy`` = step delta of energy vs previous window."""
+        e = clamp(energy)
+        f = clamp(focus)
+        if self._direct_prev_e is None:
+            d_e = 0.0
+        else:
+            d_e = max(-1.0, min(1.0, e - self._direct_prev_e))
+        self._direct_prev_e = e
+        return e, f, float(d_e)
 
     def majority_mood(self, proposed: str) -> str:
         """Stabilize ``proposed`` over the last N windows (mode); ties keep previous."""

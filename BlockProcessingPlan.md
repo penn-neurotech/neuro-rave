@@ -1,5 +1,7 @@
 # Unified Block Processing Pipeline
 
+> **Scope:** native C++ **audio** block processing (FIFO → block DSP → overlap-add). The Python **EEG → features → mood → Spotify** stack lives in the repo [README.md](README.md) (Configuration / EEG features) and [docs/dev-reference.md](docs/dev-reference.md) (Python-only components).
+
 ## Context
 
 The native audio pipeline currently runs: **producer → input FIFO → AudioWriter callback → speakers** ([main.cpp:14-82](native/main.cpp), [audio_writer.cpp:20](native/src/audio/audio_writer.cpp#L20)). There is no place for user DSP work — the audio callback pulls straight from the input FIFO.

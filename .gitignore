@@ -70,3 +70,12 @@ yarn-error.log*
 
 # Docker
 .docker/
+
+# Local-only session / chat notes (not for main)
+docs/private-neuro-rave-session-log.md
+
+# Local Spotify mood → playlist URIs (dashboard Setup writes this; do not commit)
+config/spotify_mood_mapping.json
+
+# Local EEG recordings (large; keep out of git)
+eeg data/

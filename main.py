@@ -16,9 +16,12 @@ import time
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.signal import butter, lfilter, iirnotch
 
+from src.processing.dashboard_features import DashboardFeatureState
 from src.processing.fifo import MirrorCircleFIFO
+from src.processing.mood_prepare import stabilizer_outputs_for_mood
+from src.processing.neuro_raw_inputs import neuro_raw_inputs_for_stabilizer
+from src.processing.spotify_feature_pipeline import SpotifyFeaturePipeline
 import src.constants as const
 from src.music_gen.spotify_controller import (
     MoodStabilizer,
@@ -42,27 +45,6 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
 
-# ── EEG Band definitions ─────────────────────────────────────────────────────
-
-ALPHA = (8, 13)
-
-
-# ── DSP helpers ───────────────────────────────────────────────────────────────
-
-def bandpass(data, low, high, fs):
-    b, a = butter(4, [low / (fs / 2), high / (fs / 2)], btype="band")
-    return lfilter(b, a, data, axis=0)
-
-
-def notch(data, freq, fs, Q=30):
-    b, a = iirnotch(freq / (fs / 2), Q)
-    return lfilter(b, a, data, axis=0)
-
-
-def bandpower(data):
-    return np.mean(data ** 2, axis=0)
-
-
 # ── EEG Processor ─────────────────────────────────────────────────────────────
 
 class EEGProcessor:
@@ -73,76 +55,23 @@ class EEGProcessor:
             sample_rate=const.SAMPLE_RATE,
             n_channels=const.N_CHANNELS,
         )
-        self.alpha_hist: list[np.ndarray] = []
-
-        # Attention state (alpha-suppression sustained streak + rolling variability)
-        self._current_streak_sec: float = 0.0
-        self._variability_window_size: int = max(
-            1, round(float(const.ATTENTION_VARIABILITY_SEC) / self.window_seconds)
-        )
-        self._alpha_sup_history: list[float] = []
-
-    def _update_sustained_streak(self, alpha_sup_mean: float) -> float:
-        if alpha_sup_mean > float(const.ATTENTION_ALPHA_SUP_THRESHOLD):
-            self._current_streak_sec += self.window_seconds
-        else:
-            self._current_streak_sec = 0.0
-        return self._current_streak_sec
-
-    def _update_rolling_variability(self, alpha_sup_mean: float) -> float | None:
-        self._alpha_sup_history.append(alpha_sup_mean)
-        if len(self._alpha_sup_history) > self._variability_window_size:
-            self._alpha_sup_history.pop(0)
-        if len(self._alpha_sup_history) < self._variability_window_size:
-            return None
-        return float(np.std(self._alpha_sup_history))
+        # Same 1 Hz attention + band features as the dashboard WebSocket path.
+        self._dashboard = DashboardFeatureState()
 
     def process_window(self):
-        data = self.buffer.data
-
-        data = notch(data, 60, const.SAMPLE_RATE)
-        data = bandpass(data, 1, 100, const.SAMPLE_RATE)
-
-        alpha = bandpass(data, ALPHA[0], ALPHA[1], const.SAMPLE_RATE)
-
-        self.alpha_hist.append(alpha.copy())
-
-        alpha_power = bandpower(alpha)
-
-        alpha_sup_raw = np.zeros(const.N_CHANNELS)
-        if len(self.alpha_hist) > 5:
-            baseline_data = np.concatenate(self.alpha_hist[:5], axis=0)
-            baseline = np.mean(baseline_data ** 2, axis=0)
-            alpha_sup_raw = np.where(
-                baseline > 0,
-                (baseline - alpha_power) / baseline,
-                0.0,
-            )
-        alpha_sup = np.clip(alpha_sup_raw, 0.0, 1.0)
-
-        alpha_sup_mean = float(np.mean(alpha_sup))
-        sustained_streak = self._update_sustained_streak(alpha_sup_mean)
-        sustained_attention_index = min(
-            sustained_streak / float(const.ATTENTION_SUSTAINED_SEC), 1.0
-        )
-        is_attentive = sustained_streak >= float(const.ATTENTION_SUSTAINED_SEC)
-        rolling_variability = self._update_rolling_variability(alpha_sup_mean)
-        energy_index: float | None
-        if rolling_variability is None:
-            energy_index = None
-        else:
-            energy_index = min(
-                rolling_variability / float(const.ATTENTION_VARIABILITY_MAX), 1.0
-            )
-
+        data = np.asarray(self.buffer.data, dtype=np.float32)
+        wf = self._dashboard.process_window(data)
         return {
-            "alpha_suppression": alpha_sup,
-            "alpha_sup_mean": alpha_sup_mean,
-            "sustained_streak_sec": sustained_streak,
-            "sustained_attention_index": sustained_attention_index,
-            "is_attentive": is_attentive,
-            "rolling_variability": rolling_variability,
-            "energy_index": energy_index,
+            "alpha_suppression": wf.alpha_suppression_percent,
+            "alpha_sup_mean": wf.alpha_sup_mean,
+            "sustained_streak_sec": wf.sustained_streak_sec,
+            "sustained_attention_index": wf.sustained_attention_index,
+            "is_attentive": wf.is_attentive,
+            "rolling_variability": wf.rolling_variability,
+            "energy_index": wf.energy_index,
+            "theta_beta_ratio": wf.theta_beta,
+            "gamma": wf.gamma_power,
+            "theta_beta_mean": wf.theta_beta_mean,
         }
 
 
@@ -421,6 +350,16 @@ if __name__ == "__main__":
             logger.info("Spotify controller active mode=%s key=%s", mode, key)
 
     mood_stabilizer = MoodStabilizer()
+    band_pipeline: SpotifyFeaturePipeline | None = (
+        SpotifyFeaturePipeline()
+        if const.NEURO_FEATURE_SOURCE == "band_pipeline"
+        else None
+    )
+    logger.info(
+        "NEURO_FEATURE_SOURCE=%s | NEURO_APPLY_STABILIZER_SMOOTH=%s",
+        const.NEURO_FEATURE_SOURCE,
+        const.NEURO_APPLY_STABILIZER_SMOOTH,
+    )
 
     # ── Main loop ─────────────────────────────────────────────────────────
 
@@ -470,14 +409,14 @@ if __name__ == "__main__":
             continue
 
         eeg_features = processor.process_window()
-        raw_energy = eeg_features.get("energy_index")
-        raw_focus = eeg_features.get("sustained_attention_index")
-        # During warm-up, rolling variability is not available yet, so use a
-        # neutral energy of 0.5.
-        raw_energy = float(raw_energy) if raw_energy is not None else 0.5
-        raw_focus = float(raw_focus) if raw_focus is not None else 0.0
+        raw_energy, raw_focus = neuro_raw_inputs_for_stabilizer(
+            eeg_features,
+            band_pipeline=band_pipeline,
+        )
 
-        se, sf, d_e = mood_stabilizer.smooth(raw_energy, raw_focus)
+        se, sf, d_e = stabilizer_outputs_for_mood(
+            mood_stabilizer, raw_energy, raw_focus
+        )
         spotify_features = SpotifyNeuroFeatures(energy=se, focus=sf, d_energy=d_e)
         proposed = propose_mood(spotify_features)
         mood = mood_stabilizer.majority_mood(proposed)
@@ -507,6 +446,7 @@ if __name__ == "__main__":
                     eeg_features.get("sustained_attention_index", 0.0) or 0.0
                 ),
                 energy_index=eeg_features.get("energy_index"),
+                theta_beta_ratio=float(eeg_features.get("theta_beta_mean", 0.0) or 0.0),
             )
 
         _rebuild_spotify_if_needed()

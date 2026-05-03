@@ -24,6 +24,28 @@ else:
 N_CHANNELS:       int = _config["N_CHANNELS"]
 SAMPLE_RATE:      int = _config["SAMPLE_RATE"]
 WINDOW_SIZE:      int = _config["WINDOW_SIZE"]
+LINE_FREQ: float = float(_config.get("LINE_FREQ", 60))
+
+# Session-relative theta/beta → focus (first N windows set percentiles, then bounds freeze).
+SESSION_THETA_BETA_CALIBRATION: bool = bool(_config.get("SESSION_THETA_BETA_CALIBRATION", False))
+SESSION_THETA_BETA_WARMUP_WINDOWS: int = int(_config.get("SESSION_THETA_BETA_WARMUP_WINDOWS", 120))
+SESSION_THETA_BETA_LOW_PERCENTILE: float = float(_config.get("SESSION_THETA_BETA_LOW_PERCENTILE", 10))
+SESSION_THETA_BETA_HIGH_PERCENTILE: float = float(_config.get("SESSION_THETA_BETA_HIGH_PERCENTILE", 90))
+SESSION_THETA_BETA_MIN_SPREAD: float = float(_config.get("SESSION_THETA_BETA_MIN_SPREAD", 0.02))
+
+# Raw energy/focus fed into MoodStabilizer: "attention" (variability + streak) or
+# "band_pipeline" (SpotifyFeaturePipeline from band powers, then same smooth + mood).
+_nfs = str(os.environ.get("NEURO_FEATURE_SOURCE", _config.get("NEURO_FEATURE_SOURCE", "attention"))).strip().lower()
+if _nfs not in ("attention", "band_pipeline"):
+    _nfs = "attention"
+NEURO_FEATURE_SOURCE: str = _nfs
+
+# Second smoothing stage: MoodStabilizer EMA on (energy, focus) before propose_mood.
+# false = use raw routed inputs + step d_energy only (one less smooth; band_pipeline keeps pipeline internals).
+if "NEURO_APPLY_STABILIZER_SMOOTH" in os.environ:
+    NEURO_APPLY_STABILIZER_SMOOTH: bool = _env_truthy("NEURO_APPLY_STABILIZER_SMOOTH")
+else:
+    NEURO_APPLY_STABILIZER_SMOOTH = bool(_config.get("NEURO_APPLY_STABILIZER_SMOOTH", True))
 
 # Theta/beta mean ratio → focus in [0,1]; typical resting EEG often sits between these.
 FOCUS_THETA_BETA_LOW: float = float(_config.get("FOCUS_THETA_BETA_LOW", 0.10))
