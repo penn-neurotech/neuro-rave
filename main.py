@@ -14,7 +14,7 @@ import logging
 import os
 import time
 from typing import TYPE_CHECKING
-
+import requests #python lib for making http requests so that main can send to the websocket in simulation mode
 import numpy as np
 from scipy.signal import butter, lfilter, iirnotch
 
@@ -474,8 +474,30 @@ if __name__ == "__main__":
         spotify_features = SpotifyNeuroFeatures(energy=se, focus=sf, d_energy=d_e)
         proposed = propose_mood(spotify_features)
         mood = mood_stabilizer.majority_mood(proposed)
-
         e_idx = eeg_features.get("energy_index")
+
+        if const.SIMULATE: # AAB. Added --> sends the features to the websocket server
+            try:
+                requests.post(
+                    "http://127.0.0.1:8733/features",
+                    json={
+                        "source": "main_sim",
+                        "timestamp": time.time(),
+                        "energy": float(spotify_features.energy),
+                        "focus": float(spotify_features.focus),
+                        "mood": str(mood),
+                        "energy_index": float(eeg_features["energy_index"])
+                        if eeg_features.get("energy_index") is not None else 0.0,
+                        "susined_attention_index": float(raw_focus),
+                        "is_attentive": bool(eeg_features.get("is_attentive", False)),
+                        "sustained_streak_sec": float(eeg_features.get("sustained_streak_sec", 0.0)),
+                    },
+                    timeout=0.05,
+                )
+            except requests.RequestException:
+                pass
+
+        
         logger.info(
             "e_idx=%s | e_in=%.2f f_in=%.2f | "
             "e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
