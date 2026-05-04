@@ -483,9 +483,14 @@ if __name__ == "__main__":
         mood = mood_stabilizer.majority_mood(proposed)
 
         e_idx = eeg_features.get("energy_index")
+        _src = "sim" if const.SIMULATE else "real"
         logger.info(
-            "e_idx=%s | e_in=%.2f f_in=%.2f | "
-            "e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
+            "src=%s | alpha_sup=%.2f streak=%.1fs attentive=%s e_idx=%s | "
+            "e_in=%.2f f_in=%.2f | e_sm=%.2f f_sm=%.2f d_e=%.3f | mood=%s (prop=%s)",
+            _src,
+            float(eeg_features.get("alpha_sup_mean", 0.0) or 0.0),
+            float(eeg_features.get("sustained_streak_sec", 0.0) or 0.0),
+            bool(eeg_features.get("is_attentive", False)),
             f"{float(e_idx):.2f}" if e_idx is not None else "warm-up",
             raw_energy,
             raw_focus,
